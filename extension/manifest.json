@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Douyin English",
+  "description": "在抖音网页版验证沉浸式英文配音的播放器控制体验。",
+  "version": "0.1.0",
+  "permissions": ["storage", "activeTab"],
+  "host_permissions": ["https://*.douyin.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Douyin English",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.douyin.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["audio/test.mp3"],
+      "matches": ["https://*.douyin.com/*"]
+    }
+  ]
+}

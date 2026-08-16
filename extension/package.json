@@ -1,0 +1,21 @@
+{
+  "name": "douyin-english-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "generate:audio": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-test-audio.ps1",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.326",
+    "@breezystack/lamejs": "^1.2.7",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.4"
+  }
+}

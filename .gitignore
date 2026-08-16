@@ -1,0 +1,19 @@
+node_modules/
+extension/node_modules/
+extension/dist/
+extension/coverage/
+*.log
+.DS_Store
+.tmp/
+
+# Python backend
+backend/.venv/
+backend/.pytest_cache/
+backend/.coverage
+backend/htmlcov/
+backend/.env
+backend/temp/
+backend/output/audio/*
+!backend/output/audio/.gitkeep
+__pycache__/
+*.py[cod]
