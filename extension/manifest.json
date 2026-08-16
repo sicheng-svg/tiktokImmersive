@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Douyin English",
-  "description": "在抖音网页版验证沉浸式英文配音的播放器控制体验。",
-  "version": "0.1.0",
+  "description": "在抖音网页版验证英文配音播放器控制和本地媒体音频提取。",
+  "version": "0.2.0",
   "permissions": ["storage", "activeTab"],
-  "host_permissions": ["https://*.douyin.com/*"],
+  "host_permissions": ["https://*.douyin.com/*", "http://127.0.0.1:8000/*"],
   "background": {
     "service_worker": "background.js"
   },

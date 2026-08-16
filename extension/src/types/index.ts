@@ -27,10 +27,29 @@ export interface ContentStatus {
     videoTime: number;
     dubTime: number;
     syncOffset: number;
+    processingState?: import("./videoProcessing").VideoProcessingState;
+    sourceUrl?: string;
+    sourceProvider?: string;
+    sourceConfidence?: "direct" | "heuristic";
+    taskId?: string;
+    progress?: number;
+    backendAudioUrl?: string;
+    backendError?: string;
   };
 }
 
 export type ExtensionMessage =
   | { type: "SETTINGS_UPDATED"; settings: ExtensionSettings }
   | { type: "GET_CONTENT_STATUS" }
+  | { type: "RETRY_VIDEO_PROCESSING" }
   | { type: "CONTENT_STATUS_UPDATED"; status: ContentStatus };
+
+export type {
+  BackendTaskStatus,
+  ProcessVideoInput,
+  VideoProcessingRequest,
+  VideoProcessingResponse,
+  VideoProcessingState,
+  VideoProcessingStatus,
+  VideoTask,
+} from "./videoProcessing";

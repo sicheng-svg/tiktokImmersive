@@ -154,6 +154,21 @@ select {
   font-weight: 600;
 }
 
+.status-card small {
+  display: block;
+  margin-top: 5px;
+  color: #8d8d9b;
+  font-size: 10px;
+}
+
+.status-card small[data-state="connected"] {
+  color: #25f4ee;
+}
+
+.status-card small[data-state="disconnected"] {
+  color: #ff8ba3;
+}
+
 .status-dot {
   width: 9px;
   height: 9px;

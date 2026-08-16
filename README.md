@@ -1,10 +1,10 @@
 # Douyin English MVP
 
-这是一个面向 PC Chrome 的抖音网页版英文沉浸式配音实验项目。当前仓库已经完成 MVP 文档中的 **Phase 1–4**：浏览器端播放器控制链路，以及独立的 FastAPI 后端骨架。
+这是一个面向 PC Chrome 的抖音网页版英文沉浸式配音实验项目。当前仓库已经完成 MVP 文档中的 **Phase 1–5**：浏览器端播放器控制链路，以及从当前视频直链到标准 WAV 的媒体提取链路。
 
 当前版本可以安装为 Manifest V3 扩展，识别抖音页面中当前可见且正在播放的视频，在 English Mode 开启时保存并静音原视频音量，同步播放一个本地英语测试 MP3，并在暂停、继续、跳转或切换视频时同步控制测试音轨。关闭插件、切换视频或播放失败时，会恢复对应视频原来的 `muted` 和 `volume` 状态。
 
-后端当前只提供健康检查、模拟任务 API 和静态音频服务。它有意不下载媒体、不调用 FFmpeg，也不执行 ASR、翻译或真实 TTS；这些能力会继续按 MVP Phase 5–8 的顺序逐步接入。
+扩展会读取当前视频元素明确提供的 HTTPS 媒体直链。页面使用 `blob:` 时，全标签页的 Performance Resource 无法证明资源属于当前视频，因此当前生产路径会安全降级为来源不可用，不会猜测相邻预加载视频。Service Worker 将可靠来源提交给仅监听本机的 FastAPI 后端，后端经过域名、DNS、重定向、连接对端、大小和超时校验后下载媒体，再通过 FFmpeg 输出 `mono / 16 kHz / 16-bit PCM WAV`。当前仍不执行 ASR、翻译或真实 TTS。
 
 ## 当前能力
 
@@ -20,9 +20,13 @@
 - 播放失败时恢复原声，不阻断用户继续看视频
 - 页面 Debug 面板和统一模块日志
 - 视频切换异步竞态保护，避免旧音轨影响新视频
-- FastAPI 健康检查、模拟任务创建与查询
+- FastAPI 健康检查、媒体任务创建与查询
 - 面向 Chrome 扩展的可配置 CORS 和静态音频服务
 - 后端请求校验、任务隔离与自动化测试
+- 当前视频媒体来源 Strategy、任务提交和状态轮询
+- HTTPS 媒体安全下载、SSRF 防护和逐跳重定向校验
+- FFmpeg 本地音频提取与 WAV 格式复验
+- 相同视频任务原子去重和旧视频异步结果隔离
 
 ## 目录
 
@@ -35,6 +39,7 @@
 │  │  ├─ schemas/
 │  │  ├─ services/
 │  │  ├─ config.py
+│  │  ├─ middleware.py
 │  │  └─ main.py
 │  ├─ output/audio/
 │  ├─ tests/
@@ -50,11 +55,16 @@
    │  ├─ encode-test-audio.mjs
    │  └─ generate-test-audio.ps1
    ├─ src/
-   │  ├─ background/serviceWorker.ts
+   │  ├─ background/
+   │  │  ├─ requestValidation.ts
+   │  │  ├─ serviceWorker.ts
+   │  │  └─ videoTaskGateway.ts
    │  ├─ content/
+   │  │  ├─ audioSourceProvider.ts
    │  │  ├─ debugPanel.ts
    │  │  ├─ dubPlayer.ts
    │  │  ├─ index.ts
+   │  │  ├─ videoProcessingCoordinator.ts
    │  │  ├─ videoAudioController.ts
    │  │  ├─ videoDetector.ts
    │  │  ├─ videoKey.ts
@@ -63,6 +73,7 @@
    │  ├─ services/
    │  ├─ types/
    │  └─ utils/
+   │     └─ mediaUrlPolicy.ts
    └─ tests/
 ```
 
@@ -91,17 +102,21 @@ npm run build
 
 ## 后端本地运行
 
-需要 Python 3.11 或更高版本。首次安装并启动：
+需要 Python 3.11 或更高版本，以及 FFmpeg。首次安装并启动：
 
 ```powershell
 cd D:\code\codex\tiktok\backend
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 Copy-Item .env.example .env
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --env-file .env
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --env-file .env
 ```
 
 访问 `http://127.0.0.1:8000/health` 应返回 `{"status":"ok"}`，交互式 API 文档位于 `http://127.0.0.1:8000/docs`。完整接口示例和测试命令见 [backend/README.md](backend/README.md)。
+
+服务必须绑定 `127.0.0.1`，不能暴露到局域网或公网。首次真机测试时，Chrome 可能要求授予扩展访问本地网络的权限；打开扩展 Popup 会自动检查 `/health` 并触发相应提示。
+
+安装 FFmpeg 或修改用户 `PATH` 后，请重新打开 PowerShell。若仍无法执行 `ffmpeg -version`，可在 `backend/.env` 中把 `DOUYIN_ENGLISH_FFMPEG_BINARY` 设置为 `ffmpeg.exe` 的绝对路径。
 
 ## Phase 1–3 手动验收
 
@@ -123,6 +138,18 @@ Copy-Item .env.example .env
 [DouyinEnglish][DubPlayer]
 ```
 
+## Phase 5 手动验收
+
+先启动后端，再重新构建并加载扩展。打开 Popup，确认“本地后端已连接”；随后开启 Debug Mode 和 English Mode，在抖音播放一条普通视频。
+
+1. Debug 面板应显示当前 `videoKey`、媒体来源策略和 `PROCESSING` 状态。
+2. 任务成功后状态变为 `READY`，并显示可访问的 `/audio/{task_id}/audio.wav` 地址。
+3. 打开该地址，确认 WAV 内容来自当前作品，而不是上一条或预加载视频。
+4. 连续快速切换视频，旧任务完成后不得覆盖当前视频的状态。
+5. 找不到可靠直链、遇到 HLS/DASH、签名失效或后端失败时，应显示来源不可用或 `ERROR`，原视频仍正常播放。
+
+建议结合 Chrome DevTools 的 Network 面板验证至少 10 条普通视频：页面实际请求的资源、Debug 面板选中的 URL 和生成的 WAV 必须属于同一作品。Phase 5 只生成标准化 WAV，尚不会把它当作英文配音播放。
+
 ## 开发命令
 
 ```powershell
@@ -137,8 +164,8 @@ npm run generate:audio  # 用 Windows 系统英语语音重新生成测试 MP3
 
 ## 实现边界与已知限制
 
-当前音频是用于验证播放器控制的循环测试素材，不是视频内容的翻译。Phase 4 后端只保存内存中的模拟任务元数据，不会访问请求里的视频 URL，因此不会下载抖音视频，也不需要任何 API Key。
+播放器当前使用的音频仍是用于验证同步控制的循环测试素材，不是视频内容的翻译。Phase 5 新生成的 WAV 只用于后续 ASR 输入和独立验收，不会替换 Phase 3 的测试音轨，也不需要任何 AI API Key。
 
-抖音页面结构会持续变化。检测逻辑不依赖某个固定 CSS class，但真实页面仍可能出现全屏播放器、直播、广告或特殊卡片等边界情况。Debug Mode 和模块日志用于完成 20 条连续切换等人工稳定性验收；这部分必须在实际 Chrome 与真实抖音会话中完成。
+抖音页面结构和 CDN 策略会持续变化。检测逻辑不依赖某个固定 CSS class，但真实页面仍可能出现全屏播放器、直播、广告、特殊卡片、`blob:`、HLS/DASH、过期签名或需要登录态的媒体地址。`blob:` 的 Performance Resource 适配器已隔离保留，但默认禁用，直到能建立与当前视频的可靠因果绑定。实现会在来源不确定时拒绝猜测；不会导出 Cookie、绕过 DRM 或让 FFmpeg 访问远程清单。
 
-下一阶段是 Phase 5 Media Extraction：在扩展端隔离音频来源策略，在后端安全获取单条当前视频媒体并通过 FFmpeg 生成统一的 `mono / 16 kHz / wav` 音频。ASR、Translation 和 TTS Provider 仍要等媒体提取独立验收通过后再实现。
+下一阶段是 **Phase 6 ASR**：把 Phase 5 生成的 WAV 交给可替换的 ASR Provider，并得到包含 `start`、`end` 和中文 `text` 的时间戳分段。在真实 Chrome 完成 Phase 5 人工验收前，不进入 Phase 6。

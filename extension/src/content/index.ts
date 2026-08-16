@@ -1,10 +1,12 @@
 import { DEFAULT_SETTINGS, getSettings, readSettingsChange } from "../services/storage";
-import type { ContentStatus, ExtensionMessage, ExtensionSettings } from "../types";
+import type { ContentStatus, ExtensionMessage, ExtensionSettings, VideoProcessingStatus } from "../types";
 import { createLogger } from "../utils/logger";
+import { AudioSourceResolver } from "./audioSourceProvider";
 import { DebugPanel } from "./debugPanel";
 import { DubPlayer } from "./dubPlayer";
 import { VideoAudioController, type MockPlaybackStatus } from "./videoAudioController";
 import { VideoDetector } from "./videoDetector";
+import { ChromeVideoTaskTransport, VideoProcessingCoordinator } from "./videoProcessingCoordinator";
 
 const logger = createLogger("Content");
 let settings: ExtensionSettings = DEFAULT_SETTINGS;
@@ -16,18 +18,13 @@ let status: ContentStatus = {
   state: "IDLE",
   message: "English Mode is off",
 };
+let playbackStatus: MockPlaybackStatus = { state: "IDLE", message: "English Mode is off" };
+let processingStatus: VideoProcessingStatus = { state: "IDLE", message: "Media extraction is off" };
 
-function publishStatus(nextStatus: ContentStatus): void {
-  status = nextStatus;
-  debugPanel.update(status, audioController.getDebugSnapshot());
-  void chrome.runtime.sendMessage({ type: "CONTENT_STATUS_UPDATED", status } satisfies ExtensionMessage).catch(() => {
-    // The popup is normally closed, so having no message receiver is expected.
-  });
-}
-
-function handlePlaybackStatus(playbackStatus: MockPlaybackStatus): void {
+function publishStatus(): void {
   const debug = audioController.getDebugSnapshot();
-  publishStatus({
+  const processingMessage = processingStatus.state === "IDLE" ? "" : ` · ${processingStatus.message}`;
+  status = {
     enabled: settings.enabled,
     state:
       playbackStatus.state === "PLAYING"
@@ -39,15 +36,33 @@ function handlePlaybackStatus(playbackStatus: MockPlaybackStatus): void {
             : settings.enabled
               ? "DETECTING"
               : "IDLE",
-    message: playbackStatus.message,
-    videoKey: playbackStatus.videoKey,
+    message: `${playbackStatus.message}${processingMessage}`,
+    videoKey: playbackStatus.videoKey ?? processingStatus.videoKey,
     debug: {
       videoUrl: debug.videoUrl,
       videoTime: debug.videoTime,
       dubTime: debug.dubTime,
       syncOffset: debug.syncOffset,
+      processingState: processingStatus.state,
+      sourceUrl: processingStatus.sourceUrl,
+      sourceProvider: processingStatus.sourceProvider,
+      sourceConfidence: processingStatus.sourceConfidence,
+      taskId: processingStatus.taskId,
+      progress: processingStatus.progress,
+      backendAudioUrl: processingStatus.audioUrl,
+      backendError: processingStatus.error,
     },
+  };
+  debugPanel.update(status, audioController.getDebugSnapshot());
+  void chrome.runtime.sendMessage({ type: "CONTENT_STATUS_UPDATED", status } satisfies ExtensionMessage).catch(() => {
+    // The popup is normally closed, so having no message receiver is expected.
   });
+}
+
+function handlePlaybackStatus(nextPlaybackStatus: MockPlaybackStatus): void {
+  // Keep Phase 3 mock playback authoritative; extraction only augments its status.
+  playbackStatus = nextPlaybackStatus;
+  publishStatus();
 }
 
 const audioController = new VideoAudioController(
@@ -56,17 +71,27 @@ const audioController = new VideoAudioController(
   DEFAULT_SETTINGS,
   handlePlaybackStatus,
 );
+const processingCoordinator = new VideoProcessingCoordinator(
+  new AudioSourceResolver(),
+  new ChromeVideoTaskTransport(),
+  (nextStatus) => {
+    processingStatus = nextStatus;
+    publishStatus();
+  },
+);
 
 function applySettings(nextSettings: ExtensionSettings): void {
   settings = nextSettings;
   document.documentElement.dataset.douyinEnglishMode = settings.enabled ? "on" : "off";
   debugPanel.setVisible(settings.debug);
   audioController.updateSettings(settings);
+  processingCoordinator.setEnabled(settings.enabled);
   logger.info(`English Mode ${settings.enabled ? "enabled" : "disabled"}`);
 }
 
 detector.onActiveVideoChanged((current) => {
   audioController.setActiveVideo(current);
+  processingCoordinator.setActiveVideo(current);
 });
 
 let runtimeRunning = false;
@@ -76,18 +101,21 @@ function startRuntime(): void {
   if (runtimeRunning) return;
   runtimeRunning = true;
   detector.start();
+  processingCoordinator.setEnabled(settings.enabled);
   debugPanel.setVisible(settings.debug);
   debugRefreshTimer = window.setInterval(() => {
     if (settings.debug) debugPanel.update(status, audioController.getDebugSnapshot());
   }, 250);
   if (settings.enabled && !detector.getActiveVideo()) {
-    publishStatus({ enabled: true, state: "DETECTING", message: "Waiting for the active video" });
+    playbackStatus = { state: "IDLE", message: "Waiting for the active video" };
+    publishStatus();
   }
 }
 
 function stopRuntime(): void {
   if (!runtimeRunning) return;
   runtimeRunning = false;
+  processingCoordinator.stop();
   audioController.stop();
   detector.stop();
   debugPanel.destroy();
@@ -115,6 +143,9 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, _sender, sendRe
   }
   if (message.type === "GET_CONTENT_STATUS") {
     sendResponse(status);
+  }
+  if (message.type === "RETRY_VIDEO_PROCESSING") {
+    processingCoordinator.retry();
   }
 });
 

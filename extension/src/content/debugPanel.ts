@@ -27,6 +27,14 @@ export class DebugPanel {
       `Offset: ${snapshot.syncOffset >= 0 ? "+" : ""}${formatSeconds(snapshot.syncOffset)}`,
       `Playing: ${snapshot.playing ? "yes" : "no"}`,
       `URL: ${snapshot.videoUrl ?? "unavailable"}`,
+      `Extraction: ${status.debug?.processingState ?? "IDLE"}`,
+      `Source provider: ${status.debug?.sourceProvider ?? "unavailable"}`,
+      `Source confidence: ${status.debug?.sourceConfidence ?? "unavailable"}`,
+      `Source URL: ${status.debug?.sourceUrl ?? "unavailable"}`,
+      `Task: ${status.debug?.taskId ?? "none"}`,
+      `Progress: ${status.debug?.progress ?? "unknown"}`,
+      `Backend audio: ${status.debug?.backendAudioUrl ?? "not ready"}`,
+      `Backend error: ${status.debug?.backendError ?? "none"}`,
     ];
     this.element.textContent = lines.join("\n");
   }

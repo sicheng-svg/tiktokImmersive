@@ -8,17 +8,24 @@ from app.config import Settings
 from app.main import create_app
 
 
+class NoopMediaProcessor:
+    def submit(self, _task_id: str) -> None:
+        return None
+
+
 @pytest.fixture
 def app(tmp_path) -> FastAPI:
     return create_app(
         settings=Settings(
             audio_dir=tmp_path / "audio",
+            media_temp_dir=tmp_path / "media",
             cors_origins=("http://localhost:5173",),
-        )
+        ),
+        media_processor=NoopMediaProcessor(),
     )
 
 
 @pytest.fixture
 def client(app: FastAPI) -> Iterator[TestClient]:
-    with TestClient(app) as test_client:
+    with TestClient(app, base_url="http://localhost") as test_client:
         yield test_client

@@ -41,6 +41,7 @@ popupRoot.innerHTML = `
       <div>
         <p>当前状态</p>
         <strong id="status">正在连接抖音页面…</strong>
+        <small id="backend-status">后端：正在检测本地服务…</small>
       </div>
     </section>
   </main>
@@ -50,8 +51,33 @@ const enabledInput = popupRoot.querySelector<HTMLInputElement>("#enabled")!;
 const rateSelect = popupRoot.querySelector<HTMLSelectElement>("#playbackRate")!;
 const debugInput = popupRoot.querySelector<HTMLInputElement>("#debug")!;
 const statusText = popupRoot.querySelector<HTMLElement>("#status")!;
+const backendStatusText = popupRoot.querySelector<HTMLElement>("#backend-status")!;
 
 let settings: ExtensionSettings = DEFAULT_SETTINGS;
+
+async function checkBackendHealth(): Promise<void> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 30_000);
+  try {
+    // A foreground popup fetch can surface Chrome's Local Network Access prompt.
+    const response = await fetch("http://127.0.0.1:8000/health", {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    const payload = (await response.json()) as { status?: unknown };
+    if (!response.ok || payload.status !== "ok") throw new Error(`Health check failed (${response.status})`);
+    backendStatusText.textContent = "后端：已连接";
+    backendStatusText.dataset.state = "connected";
+    await sendToContent({ type: "RETRY_VIDEO_PROCESSING" });
+  } catch (error) {
+    logger.warn("Local backend health check failed", error);
+    backendStatusText.textContent = "后端：未连接（请启动服务并允许本地网络访问）";
+    backendStatusText.dataset.state = "disconnected";
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
 
 function render(nextSettings: ExtensionSettings): void {
   enabledInput.checked = nextSettings.enabled;
@@ -137,3 +163,5 @@ void getSettings()
     logger.error("Failed to initialize popup", error);
     statusText.textContent = "插件初始化失败";
   });
+
+void checkBackendHealth();
