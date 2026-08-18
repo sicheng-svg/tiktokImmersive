@@ -1,10 +1,11 @@
 import { createLogger } from "../utils/logger";
-import { VideoKeyFactory } from "./videoKey";
+import { findActiveFeedAwemeId, VideoKeyFactory } from "./videoKey";
 import { VideoObserver, type VideoCandidate } from "./videoObserver";
 
 export interface ActiveVideo {
   element: HTMLVideoElement;
   videoKey: string;
+  boundAwemeId: string | null;
   currentTime: number;
   playing: boolean;
 }
@@ -15,6 +16,14 @@ export interface VisibilityViewport {
 }
 
 export type ActiveVideoChangeHandler = (current: ActiveVideo | null, previous: ActiveVideo | null) => void;
+
+export function hasSameActiveVideoIdentity(left: ActiveVideo | null, right: ActiveVideo | null): boolean {
+  return (
+    left?.element === right?.element &&
+    left?.videoKey === right?.videoKey &&
+    left?.boundAwemeId === right?.boundAwemeId
+  );
+}
 
 const logger = createLogger("VideoDetector");
 const MIN_VISIBILITY_RATIO = 0.02;
@@ -108,10 +117,11 @@ export class VideoDetector {
     const next: ActiveVideo = {
       element: candidate.element,
       videoKey,
+      boundAwemeId: findActiveFeedAwemeId(candidate.element),
       currentTime: candidate.element.currentTime,
       playing: !candidate.element.paused && !candidate.element.ended,
     };
-    if (this.active?.element === next.element && this.active.videoKey === next.videoKey) {
+    if (hasSameActiveVideoIdentity(this.active, next)) {
       this.active = next;
       return;
     }
@@ -129,7 +139,7 @@ export class VideoDetector {
 
   private setActive(next: ActiveVideo | null): void {
     const previous = this.active;
-    if (previous?.element === next?.element && previous?.videoKey === next?.videoKey) return;
+    if (hasSameActiveVideoIdentity(previous, next)) return;
     this.active = next;
     logger.info(`Active video changed: ${previous?.videoKey ?? "none"} -> ${next?.videoKey ?? "none"}`);
     this.listeners.forEach((listener) => listener(next, previous));

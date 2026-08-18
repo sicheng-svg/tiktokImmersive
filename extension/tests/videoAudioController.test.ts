@@ -56,6 +56,7 @@ function createActiveVideo(videoKey: string, initialPaused = false): ActiveVideo
   return {
     element,
     videoKey,
+    boundAwemeId: null,
     currentTime: element.currentTime,
     playing: !paused,
     setPaused: (value: boolean) => {

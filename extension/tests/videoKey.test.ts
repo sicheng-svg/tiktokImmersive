@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { findAwemeId, VideoKeyFactory } from "../src/content/videoKey";
+import { findActiveFeedAwemeId, findAwemeId, VideoKeyFactory } from "../src/content/videoKey";
 
 describe("VideoKeyFactory", () => {
   beforeEach(() => {
@@ -49,5 +49,51 @@ describe("VideoKeyFactory", () => {
 
     document.body.append(document.createElement("video"));
     expect(findAwemeId(onlyVideo)).toBeNull();
+  });
+
+  it("binds an active marker and data-e2e-vid on adjacent nested ancestors", () => {
+    const outerMarker = document.createElement("div");
+    outerMarker.dataset.e2e = "feed-active-video";
+    const innerId = document.createElement("div");
+    innerId.dataset.e2eVid = "7382738211234567890";
+    const firstVideo = document.createElement("video");
+    innerId.append(firstVideo);
+    outerMarker.append(innerId);
+    document.body.append(outerMarker);
+
+    const outerId = document.createElement("div");
+    outerId.dataset.e2eVid = "7382738211234567891";
+    const innerMarker = document.createElement("div");
+    innerMarker.dataset.e2e = "feed-active-video";
+    const secondVideo = document.createElement("video");
+    innerMarker.append(secondVideo);
+    outerId.append(innerMarker);
+    document.body.append(outerId);
+
+    expect(findActiveFeedAwemeId(firstVideo)).toBe("7382738211234567890");
+    expect(findActiveFeedAwemeId(secondVideo)).toBe("7382738211234567891");
+  });
+
+  it("rejects conflicting ids and active scopes shared by multiple videos", () => {
+    const conflictingOuter = document.createElement("div");
+    conflictingOuter.dataset.e2e = "feed-active-video";
+    conflictingOuter.dataset.e2eVid = "7382738211234567890";
+    const conflictingInner = document.createElement("div");
+    conflictingInner.dataset.e2eVid = "7382738211234567891";
+    const conflictingVideo = document.createElement("video");
+    conflictingInner.append(conflictingVideo);
+    conflictingOuter.append(conflictingInner);
+    document.body.append(conflictingOuter);
+    expect(findActiveFeedAwemeId(conflictingVideo)).toBeNull();
+
+    const shared = document.createElement("div");
+    shared.dataset.e2e = "feed-active-video";
+    shared.dataset.e2eVid = "7382738211234567892";
+    const first = document.createElement("video");
+    const second = document.createElement("video");
+    shared.append(first, second);
+    document.body.append(shared);
+    expect(findActiveFeedAwemeId(first)).toBeNull();
+    expect(findActiveFeedAwemeId(second)).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import socket
 import time
 from collections.abc import Callable, Iterable
@@ -14,6 +15,13 @@ import httpx
 
 
 REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+DOUYIN_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/142.0.0.0 Safari/537.36"
+)
+DOUYIN_REFERER = "https://www.douyin.com/"
+logger = logging.getLogger(__name__)
 
 
 class MediaDownloadError(RuntimeError):
@@ -86,7 +94,7 @@ class HttpMediaDownloader:
                 write=read_timeout_seconds,
                 pool=connect_timeout_seconds,
             ),
-            headers={"User-Agent": "DouyinEnglishMVP/0.2"},
+            headers={"User-Agent": DOUYIN_BROWSER_USER_AGENT},
         )
 
     def close(self) -> None:
@@ -116,10 +124,12 @@ class HttpMediaDownloader:
                     "GET",
                     target.request_url,
                     headers={
-                        "Accept": "video/*,audio/*,application/octet-stream;q=0.8",
+                        "Accept": "*/*",
                         "Accept-Encoding": "identity",
                         "Connection": "close",
                         "Host": target.host,
+                        "Referer": DOUYIN_REFERER,
+                        "User-Agent": DOUYIN_BROWSER_USER_AGENT,
                     },
                     timeout=request_timeout,
                     extensions={"sni_hostname": target.host},
@@ -143,7 +153,15 @@ class HttpMediaDownloader:
                     try:
                         response.raise_for_status()
                     except httpx.HTTPStatusError as exc:
-                        raise MediaDownloadError("Media server rejected the download") from exc
+                        logger.warning(
+                            "Media server rejected download: host=%s status=%d redirects=%d",
+                            target.host,
+                            response.status_code,
+                            redirects_followed,
+                        )
+                        raise MediaDownloadError(
+                            f"Media server rejected the download (HTTP {response.status_code})"
+                        ) from exc
 
                     self._validate_content_type(response)
 

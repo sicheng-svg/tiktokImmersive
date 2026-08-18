@@ -1,7 +1,8 @@
 import { DEFAULT_SETTINGS, getSettings, readSettingsChange } from "../services/storage";
 import type { ContentStatus, ExtensionMessage, ExtensionSettings, VideoProcessingStatus } from "../types";
 import { createLogger } from "../utils/logger";
-import { AudioSourceResolver } from "./audioSourceProvider";
+import { AudioSourceResolver, BoundAwemeSourceProvider, DirectVideoSourceProvider } from "./audioSourceProvider";
+import { getCapturedAwemeSourceRegistry } from "./capturedAwemeSources";
 import { DebugPanel } from "./debugPanel";
 import { DubPlayer } from "./dubPlayer";
 import { VideoAudioController, type MockPlaybackStatus } from "./videoAudioController";
@@ -11,6 +12,7 @@ import { ChromeVideoTaskTransport, VideoProcessingCoordinator } from "./videoPro
 const logger = createLogger("Content");
 let settings: ExtensionSettings = DEFAULT_SETTINGS;
 const detector = new VideoDetector();
+const capturedAwemeSources = getCapturedAwemeSourceRegistry();
 const dubPlayer = new DubPlayer();
 const debugPanel = new DebugPanel();
 let status: ContentStatus = {
@@ -72,13 +74,39 @@ const audioController = new VideoAudioController(
   handlePlaybackStatus,
 );
 const processingCoordinator = new VideoProcessingCoordinator(
-  new AudioSourceResolver(),
+  new AudioSourceResolver([
+    new DirectVideoSourceProvider(),
+    new BoundAwemeSourceProvider(capturedAwemeSources),
+  ]),
   new ChromeVideoTaskTransport(),
   (nextStatus) => {
     processingStatus = nextStatus;
     publishStatus();
   },
 );
+
+capturedAwemeSources.subscribe((updatedAwemeIds) => {
+  if (processingStatus.state !== "SOURCE_UNAVAILABLE" && processingStatus.state !== "ERROR") return;
+  const active = detector.getActiveVideo();
+  const awemeId = active?.boundAwemeId ?? null;
+  if (!active || !awemeId || !updatedAwemeIds.has(awemeId)) return;
+  const activeElement = active.element;
+  const activeVideoKey = active.videoKey;
+  void detector
+    .evaluateNow()
+    .then(() => {
+      const refreshed = detector.getActiveVideo();
+      if (
+        refreshed?.element === activeElement &&
+        refreshed.videoKey === activeVideoKey &&
+        refreshed.boundAwemeId === awemeId &&
+        (processingStatus.state === "SOURCE_UNAVAILABLE" || processingStatus.state === "ERROR")
+      ) {
+        processingCoordinator.retry();
+      }
+    })
+    .catch((error: unknown) => logger.error("Failed to refresh captured media identity", error));
+});
 
 function applySettings(nextSettings: ExtensionSettings): void {
   settings = nextSettings;

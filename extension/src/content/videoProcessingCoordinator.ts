@@ -6,8 +6,8 @@ import type {
   VideoTask,
 } from "../types/videoProcessing";
 import { createLogger } from "../utils/logger";
-import { AudioSourceResolver } from "./audioSourceProvider";
-import type { ActiveVideo } from "./videoDetector";
+import { AudioSourceResolver, type ResolvedAudioSource } from "./audioSourceProvider";
+import { hasSameActiveVideoIdentity, type ActiveVideo } from "./videoDetector";
 
 export interface VideoTaskTransport {
   start(input: ProcessVideoInput): Promise<VideoTask>;
@@ -24,6 +24,12 @@ type ProcessingStatusHandler = (status: VideoProcessingStatus) => void;
 const logger = createLogger("ProcessingCoordinator");
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_MAX_POLL_ATTEMPTS = 300;
+const RETRYABLE_SOURCE_ERROR_PREFIXES = [
+  "Media server rejected the download",
+  "Media download failed",
+  "Media download timed out",
+  "Media host could not be resolved",
+] as const;
 
 function getResponseTask(response: unknown): VideoTask {
   const result = response as VideoProcessingResponse | undefined;
@@ -72,7 +78,7 @@ export class VideoProcessingCoordinator {
   }
 
   setActiveVideo(next: ActiveVideo | null): void {
-    const sameVideo = this.active?.element === next?.element && this.active?.videoKey === next?.videoKey;
+    const sameVideo = hasSameActiveVideoIdentity(this.active, next);
     this.observeSourceChanges(next?.element ?? null);
     this.active = next;
     if (sameVideo) return;
@@ -104,7 +110,7 @@ export class VideoProcessingCoordinator {
       return;
     }
 
-    const resolution = this.resolver.resolve(active.element);
+    const resolution = this.resolver.resolve(active.element, active.videoKey);
     if (!resolution.source) {
       this.emit({
         state: "SOURCE_UNAVAILABLE",
@@ -115,26 +121,42 @@ export class VideoProcessingCoordinator {
       return;
     }
 
-    const source = resolution.source;
+    this.submitSource(resolution.source, generation, active.videoKey);
+  }
+
+  private submitSource(
+    source: ResolvedAudioSource,
+    generation: number,
+    videoKey: string,
+    isFallback = false,
+  ): void {
+    if (!this.isCurrent(generation, videoKey)) return;
     this.emit({
       state: "SUBMITTING",
-      message: source.confidence === "heuristic" ? "Submitting heuristic media source" : "Submitting video source",
-      videoKey: active.videoKey,
+      message:
+        isFallback
+          ? "Retrying an alternate media source"
+          : source.confidence === "heuristic"
+            ? "Submitting heuristic media source"
+            : source.confidence === "bound"
+              ? "Submitting aweme-bound media source"
+              : "Submitting video source",
+      videoKey,
       sourceUrl: source.url,
       sourceProvider: source.provider,
       sourceConfidence: source.confidence,
     });
     void this.transport
-      .start({ videoKey: active.videoKey, videoUrl: source.url })
-      .then((task) => this.handleTask(task, generation, active.videoKey, source, 0))
-      .catch((error: unknown) => this.handleFailure(error, generation, active.videoKey, source));
+      .start({ videoKey, videoUrl: source.url })
+      .then((task) => this.handleTask(task, generation, videoKey, source, 0))
+      .catch((error: unknown) => this.handleFailure(error, generation, videoKey, source));
   }
 
   private handleTask(
     task: VideoTask,
     generation: number,
     videoKey: string,
-    source: { url: string; provider: string; confidence: "direct" | "heuristic" },
+    source: ResolvedAudioSource,
     pollAttempt: number,
   ): void {
     if (!this.isCurrent(generation, videoKey)) return;
@@ -155,6 +177,7 @@ export class VideoProcessingCoordinator {
       return;
     }
     if (task.status === "ERROR") {
+      if (this.tryNextSource(task.error, source, generation, videoKey)) return;
       logger.error("Media extraction task failed", task.error);
       this.emit({ state: "ERROR", message: "Media extraction failed; mock playback is unchanged", ...common });
       return;
@@ -183,7 +206,7 @@ export class VideoProcessingCoordinator {
     error: unknown,
     generation: number,
     videoKey: string,
-    source: { url: string; provider: string; confidence: "direct" | "heuristic" },
+    source: ResolvedAudioSource,
     taskId?: string,
   ): void {
     if (!this.isCurrent(generation, videoKey)) return;
@@ -203,6 +226,29 @@ export class VideoProcessingCoordinator {
 
   private isCurrent(generation: number, videoKey: string): boolean {
     return generation === this.generation && this.enabled && this.active?.videoKey === videoKey;
+  }
+
+  private tryNextSource(
+    error: string | undefined,
+    source: ResolvedAudioSource,
+    generation: number,
+    videoKey: string,
+  ): boolean {
+    if (!error || !RETRYABLE_SOURCE_ERROR_PREFIXES.some((prefix) => error.startsWith(prefix))) return false;
+    const [nextUrl, ...remainingUrls] = source.fallbackUrls ?? [];
+    if (!nextUrl) return false;
+    logger.warn("Retrying alternate captured media source", { videoKey, remaining: remainingUrls.length });
+    this.submitSource(
+      {
+        ...source,
+        url: nextUrl,
+        fallbackUrls: remainingUrls,
+      },
+      generation,
+      videoKey,
+      true,
+    );
+    return true;
   }
 
   private cancelPendingWork(): void {

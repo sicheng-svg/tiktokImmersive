@@ -17,7 +17,7 @@ describe("background proxy validation", () => {
     expect(
       isVideoProcessingMessage({
         type: "PROCESS_VIDEO_SOURCE",
-        payload: { videoKey: "url:abc_123", videoUrl: "https://media.example/video.mp4" },
+        payload: { videoKey: "url:abc_123", videoUrl: "https://v1.douyinvod.com/video.mp4" },
       }),
     ).toBe(true);
     expect(
@@ -36,12 +36,14 @@ describe("background proxy validation", () => {
       payload: { videoKey: "video-1", videoUrl },
     });
 
-    expect(isVideoProcessingMessage(message("https://media.example/video.mp4"))).toBe(true);
-    expect(isVideoProcessingMessage(message("https://media.example:443/video.mp4"))).toBe(true);
-    expect(isVideoProcessingMessage(message("http://media.example/video.mp4"))).toBe(false);
-    expect(isVideoProcessingMessage(message("https://media.example:8443/video.mp4"))).toBe(false);
-    expect(isVideoProcessingMessage(message("https://media.example/master.m3u8?token=abc"))).toBe(false);
-    expect(isVideoProcessingMessage(message("https://media.example/manifest.mpd"))).toBe(false);
-    expect(isVideoProcessingMessage(message("https://media.example/live%2Em3u8"))).toBe(false);
+    expect(isVideoProcessingMessage(message("https://v1.douyinvod.com/video.mp4"))).toBe(true);
+    expect(isVideoProcessingMessage(message("https://v1.douyinvod.com:443/video.mp4"))).toBe(true);
+    expect(isVideoProcessingMessage(message("http://v1.douyinvod.com/video.mp4"))).toBe(false);
+    expect(isVideoProcessingMessage(message("https://v1.douyinvod.com:8443/video.mp4"))).toBe(false);
+    expect(isVideoProcessingMessage(message("https://v1.douyinvod.com/master.m3u8?token=abc"))).toBe(false);
+    expect(isVideoProcessingMessage(message("https://v1.douyinvod.com/manifest.mpd"))).toBe(false);
+    expect(isVideoProcessingMessage(message("https://v1.douyinvod.com/live%2Em3u8"))).toBe(false);
+    expect(isVideoProcessingMessage(message("https://v1.douyinvod.com/cover.jpg?token=abc"))).toBe(false);
+    expect(isVideoProcessingMessage(message("https://attacker.example/video.mp4"))).toBe(false);
   });
 });

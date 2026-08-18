@@ -9,6 +9,27 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe("VideoTaskGateway", () => {
+  it("invokes fetch with the worker global as its receiver", async () => {
+    const receivers: unknown[] = [];
+    const fetchMock = new Proxy(
+      vi.fn<typeof fetch>().mockResolvedValue(
+        jsonResponse({ task_id: "task-worker", status: "PROCESSING", progress: 0 }, 202),
+      ),
+      {
+        apply(target, thisArg, argumentsList) {
+          receivers.push(thisArg);
+          return Reflect.apply(target, thisArg, argumentsList);
+        },
+      },
+    );
+    const gateway = new VideoTaskGateway(fetchMock);
+
+    await expect(
+      gateway.start({ videoKey: "video-worker", videoUrl: "https://media.example/worker.mp4" }),
+    ).resolves.toMatchObject({ taskId: "task-worker" });
+    expect(receivers).toEqual([globalThis]);
+  });
+
   it("deduplicates concurrent submissions for the same videoKey", async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
       jsonResponse({ task_id: "task-1", status: "PROCESSING", progress: 0 }, 202),

@@ -1,17 +1,48 @@
-const AWEME_ATTRIBUTE_NAMES = ["data-aweme-id", "data-video-id", "data-item-id"];
+const AWEME_ATTRIBUTE_NAMES = ["data-e2e-vid", "data-aweme-id", "data-video-id", "data-item-id"];
 const AWEME_URL_PATTERN = /\/(?:video|note)\/(\d{8,})/;
+const AWEME_ID_PATTERN = /^\d{8,32}$/;
+const MAX_AWEME_ANCESTOR_DEPTH = 8;
 
 function findAwemeIdInUrl(value: string | null | undefined): string | null {
   if (!value) return null;
   return value.match(AWEME_URL_PATTERN)?.[1] ?? null;
 }
 
-export function findAwemeId(video: HTMLVideoElement): string | null {
+export function findActiveFeedAwemeId(video: HTMLVideoElement): string | null {
+  const ancestors: Element[] = [];
   let element: Element | null = video;
-  for (let depth = 0; element && depth < 8; depth += 1, element = element.parentElement) {
+  for (let depth = 0; element && depth < MAX_AWEME_ANCESTOR_DEPTH; depth += 1, element = element.parentElement) {
+    ancestors.push(element);
+  }
+
+  const activeScopes = ancestors.filter((candidate) => candidate.getAttribute("data-e2e") === "feed-active-video");
+  if (activeScopes.length === 0 || activeScopes.some((scope) => !scopeContainsOnlyVideo(scope, video))) return null;
+
+  const ids = new Set<string>();
+  for (const candidate of ancestors) {
+    const value = candidate.getAttribute("data-e2e-vid");
+    if (value === null) continue;
+    if (!AWEME_ID_PATTERN.test(value) || !scopeContainsOnlyVideo(candidate, video)) return null;
+    ids.add(value);
+  }
+  return ids.size === 1 ? ids.values().next().value ?? null : null;
+}
+
+function scopeContainsOnlyVideo(scope: Element, video: HTMLVideoElement): boolean {
+  if (scope === video) return true;
+  const videos = scope.querySelectorAll<HTMLVideoElement>("video");
+  return videos.length === 1 && videos[0] === video;
+}
+
+export function findAwemeId(video: HTMLVideoElement): string | null {
+  const activeFeedId = findActiveFeedAwemeId(video);
+  if (activeFeedId) return activeFeedId;
+
+  let element: Element | null = video;
+  for (let depth = 0; element && depth < MAX_AWEME_ANCESTOR_DEPTH; depth += 1, element = element.parentElement) {
     for (const attribute of AWEME_ATTRIBUTE_NAMES) {
       const value = element.getAttribute(attribute);
-      if (value && /^\d{8,}$/.test(value)) return value;
+      if (value && AWEME_ID_PATTERN.test(value)) return value;
     }
 
     if (element instanceof HTMLAnchorElement) {

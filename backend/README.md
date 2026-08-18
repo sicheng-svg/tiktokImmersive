@@ -66,10 +66,12 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/tasks/$($task.task_id)"
 - 每次请求和每次重定向都会重新校验域名、DNS 结果和连接对端。
 - DNS 解析出的所有地址必须是公网地址；请求固定连接到已校验 IP，同时保留原始 Host 和 TLS SNI。
 - HTTP 客户端忽略系统代理环境变量，防止代理绕过本地校验。
+- CDN 请求使用固定浏览器兼容 `User-Agent`、固定抖音 `Referer` 和最小媒体请求头；不会转发浏览器 Cookie、Authorization 或任意页面请求头。
 - 下载有域名白名单、重定向次数、连接/读取/整体时限和字节上限。
 - HTML、JSON、HLS、DASH、ffconcat 和空响应会被拒绝；并发执行数和待处理任务数有上限。
 - FFmpeg 不通过 shell 启动，只允许本地 `file,pipe` 协议，并显式禁用网络协议、限制进程时长、最多提取 15 分钟且限制 WAV 为 32 MiB。输出后再次验证 WAV 声道、采样率、位宽和非空帧。
 - 写接口还会执行 Origin 校验，Host 头由 TrustedHost 白名单限制。
+- CDN 拒绝会记录域名、HTTP 状态和重定向次数，但不会记录 URL 路径、查询参数、签名或响应正文。
 
 相关限制均可在 `.env.example` 中查看和调整。扩大媒体域名白名单前，应先确认域名所有权和实际 CDN 跳转链，不要使用过宽的公共后缀。
 
@@ -84,4 +86,4 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/tasks/$($task.task_id)"
 
 当前任务数据仍保存在进程内存中，服务重启后任务元数据会丢失；生成的 WAV 不会自动清理。这两项属于后续持久化和生命周期管理范围。
 
-扩展当前只自动提交视频元素明确暴露的 HTTPS 直链。`blob:` 与全页面 Resource Timing 之间没有可靠归属关系，因此默认安全降级，不会为了提高命中率猜测预加载资源。
+扩展会自动提交视频元素明确暴露的 HTTPS 直链。对 `blob:` 视频，Phase 5.1 只使用由抖音 aweme/feed 响应捕获、并与当前 DOM 作品 ID 和 `videoKey` 精确一致的媒体地址；全页面 Resource Timing 猜测仍默认禁用。一个作品响应中的多个合法 CDN 地址会按顺序保留，只有首选地址出现明确下载类错误时才会尝试备用地址。

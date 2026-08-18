@@ -76,7 +76,7 @@ DEFAULT_MEDIA_HOST_SUFFIXES = (
 @dataclass(frozen=True, slots=True)
 class Settings:
     app_name: str = "Douyin English API"
-    app_version: str = "0.2.0"
+    app_version: str = "0.2.1"
     environment: str = "development"
     audio_dir: Path = field(default_factory=lambda: BACKEND_ROOT / "output" / "audio")
     media_temp_dir: Path = field(default_factory=lambda: BACKEND_ROOT / "temp" / "media")

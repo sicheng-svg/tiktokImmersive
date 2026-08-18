@@ -33,7 +33,12 @@ export class VideoObserver {
     if (this.started) return;
     this.started = true;
     document.querySelectorAll<HTMLVideoElement>("video").forEach((video) => this.track(video));
-    this.mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
+    this.mutationObserver.observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["data-e2e", "data-e2e-vid"],
+    });
     window.addEventListener("scroll", this.onViewportChanged, { passive: true });
     window.addEventListener("resize", this.onViewportChanged);
     this.onCandidatesChanged();

@@ -110,7 +110,7 @@ export class VideoTaskGateway {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.fetchImplementation(`${this.baseUrl}${path}`, {
+      const response = await this.fetchImplementation.call(globalThis, `${this.baseUrl}${path}`, {
         ...init,
         signal: controller.signal,
       });

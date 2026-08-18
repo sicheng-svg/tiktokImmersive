@@ -1,15 +1,18 @@
 import { createLogger } from "../utils/logger";
-import { normalizeSecureMediaUrl } from "../utils/mediaUrlPolicy";
+import { normalizeDouyinMediaUrl } from "../utils/mediaUrlPolicy";
+import type { CapturedAwemeSourceRegistry } from "./capturedAwemeSources";
+import { findActiveFeedAwemeId } from "./videoKey";
 
 export interface ResolvedAudioSource {
   url: string;
+  fallbackUrls?: readonly string[];
   provider: string;
-  confidence: "direct" | "heuristic";
+  confidence: "direct" | "bound" | "heuristic";
 }
 
 export interface AudioSourceProvider {
   readonly id: string;
-  resolve(video: HTMLVideoElement): ResolvedAudioSource | null;
+  resolve(video: HTMLVideoElement, videoKey?: string): ResolvedAudioSource | null;
 }
 
 export interface ResourceCandidate {
@@ -34,7 +37,7 @@ const MEDIA_INITIATORS = new Set(["audio", "media", "video"]);
 const DEFAULT_RESOURCE_WINDOW_MS = 1_500;
 
 export function normalizeMediaSourceUrl(value: string | null | undefined): string | null {
-  return normalizeSecureMediaUrl(value, window.location.href);
+  return normalizeDouyinMediaUrl(value, window.location.href);
 }
 
 function hasBlobSource(video: HTMLVideoElement): boolean {
@@ -80,6 +83,25 @@ export class DirectVideoSourceProvider implements AudioSourceProvider {
   }
 }
 
+export class BoundAwemeSourceProvider implements AudioSourceProvider {
+  readonly id = "aweme-response";
+
+  constructor(private readonly sources: CapturedAwemeSourceRegistry) {}
+
+  resolve(video: HTMLVideoElement, videoKey?: string): ResolvedAudioSource | null {
+    const awemeId = findActiveFeedAwemeId(video);
+    if (!awemeId || videoKey !== awemeId) return null;
+    const [url, ...fallbackUrls] = this.sources.getCandidates(awemeId);
+    if (!url) return null;
+    return {
+      url,
+      ...(fallbackUrls.length > 0 ? { fallbackUrls } : {}),
+      provider: this.id,
+      confidence: "bound",
+    };
+  }
+}
+
 export class PerformanceResourceSourceProvider implements AudioSourceProvider {
   readonly id = "performance-resource";
 
@@ -118,10 +140,10 @@ export class AudioSourceResolver {
     private readonly providers: AudioSourceProvider[] = [new DirectVideoSourceProvider()],
   ) {}
 
-  resolve(video: HTMLVideoElement): AudioSourceResolution {
+  resolve(video: HTMLVideoElement, videoKey?: string): AudioSourceResolution {
     for (const provider of this.providers) {
       try {
-        const source = provider.resolve(video);
+        const source = provider.resolve(video, videoKey);
         if (source) {
           logger.info("Resolved active video source", {
             provider: source.provider,

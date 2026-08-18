@@ -30,7 +30,7 @@ export interface ContentStatus {
     processingState?: import("./videoProcessing").VideoProcessingState;
     sourceUrl?: string;
     sourceProvider?: string;
-    sourceConfidence?: "direct" | "heuristic";
+    sourceConfidence?: "direct" | "bound" | "heuristic";
     taskId?: string;
     progress?: number;
     backendAudioUrl?: string;

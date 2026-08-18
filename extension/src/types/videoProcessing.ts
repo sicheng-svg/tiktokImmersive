@@ -35,7 +35,7 @@ export interface VideoProcessingStatus {
   videoKey?: string;
   sourceUrl?: string;
   sourceProvider?: string;
-  sourceConfidence?: "direct" | "heuristic";
+  sourceConfidence?: "direct" | "bound" | "heuristic";
   taskId?: string;
   progress?: number;
   audioUrl?: string;

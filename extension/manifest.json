@@ -2,7 +2,8 @@
   "manifest_version": 3,
   "name": "Douyin English",
   "description": "在抖音网页版验证英文配音播放器控制和本地媒体音频提取。",
-  "version": "0.2.0",
+  "version": "0.2.1",
+  "minimum_chrome_version": "111",
   "permissions": ["storage", "activeTab"],
   "host_permissions": ["https://*.douyin.com/*", "http://127.0.0.1:8000/*"],
   "background": {
@@ -13,6 +14,18 @@
     "default_popup": "popup.html"
   },
   "content_scripts": [
+    {
+      "matches": ["https://*.douyin.com/*"],
+      "js": ["media-capture-bridge.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    },
+    {
+      "matches": ["https://*.douyin.com/*"],
+      "js": ["page-media-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
     {
       "matches": ["https://*.douyin.com/*"],
       "js": ["content.js"],

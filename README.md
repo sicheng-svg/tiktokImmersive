@@ -1,10 +1,10 @@
 # Douyin English MVP
 
-这是一个面向 PC Chrome 的抖音网页版英文沉浸式配音实验项目。当前仓库已经完成 MVP 文档中的 **Phase 1–5**：浏览器端播放器控制链路，以及从当前视频直链到标准 WAV 的媒体提取链路。
+这是一个面向 PC Chrome 的抖音网页版英文沉浸式配音实验项目。当前仓库已经完成 MVP 文档中的 **Phase 1–5.1**：浏览器端播放器控制链路，以及从当前视频可靠媒体地址到标准 WAV 的媒体提取链路。
 
 当前版本可以安装为 Manifest V3 扩展，识别抖音页面中当前可见且正在播放的视频，在 English Mode 开启时保存并静音原视频音量，同步播放一个本地英语测试 MP3，并在暂停、继续、跳转或切换视频时同步控制测试音轨。关闭插件、切换视频或播放失败时，会恢复对应视频原来的 `muted` 和 `volume` 状态。
 
-扩展会读取当前视频元素明确提供的 HTTPS 媒体直链。页面使用 `blob:` 时，全标签页的 Performance Resource 无法证明资源属于当前视频，因此当前生产路径会安全降级为来源不可用，不会猜测相邻预加载视频。Service Worker 将可靠来源提交给仅监听本机的 FastAPI 后端，后端经过域名、DNS、重定向、连接对端、大小和超时校验后下载媒体，再通过 FFmpeg 输出 `mono / 16 kHz / 16-bit PCM WAV`。当前仍不执行 ASR、翻译或真实 TTS。
+扩展优先读取当前视频元素明确提供的 HTTPS 媒体直链。页面使用 `blob:` 时，Phase 5.1 会在页面主世界有界解析抖音 `aweme/feed` JSON 响应，并且只有在当前视频 DOM 标记、`videoKey` 和响应中的作品 ID 三方一致时才提交对应媒体地址；不会用全标签页 Performance Resource 猜测相邻预加载视频。Service Worker 将可靠来源提交给仅监听本机的 FastAPI 后端，后端经过域名、DNS、重定向、连接对端、大小和超时校验后下载媒体，再通过 FFmpeg 输出 `mono / 16 kHz / 16-bit PCM WAV`。当前仍不执行 ASR、翻译或真实 TTS。
 
 ## 当前能力
 
@@ -24,7 +24,10 @@
 - 面向 Chrome 扩展的可配置 CORS 和静态音频服务
 - 后端请求校验、任务隔离与自动化测试
 - 当前视频媒体来源 Strategy、任务提交和状态轮询
+- `blob:` 视频的 aweme 响应捕获、三方作品 ID 绑定与到达顺序竞态保护
+- 同作品多个已验证 CDN 地址保留和仅限下载类错误的受控回退
 - HTTPS 媒体安全下载、SSRF 防护和逐跳重定向校验
+- 固定浏览器兼容请求头和不泄露签名 URL 的 HTTP 状态诊断
 - FFmpeg 本地音频提取与 WAV 格式复验
 - 相同视频任务原子去重和旧视频异步结果隔离
 
@@ -61,6 +64,7 @@
    │  │  └─ videoTaskGateway.ts
    │  ├─ content/
    │  │  ├─ audioSourceProvider.ts
+   │  │  ├─ capturedAwemeSources.ts
    │  │  ├─ debugPanel.ts
    │  │  ├─ dubPlayer.ts
    │  │  ├─ index.ts
@@ -69,9 +73,13 @@
    │  │  ├─ videoDetector.ts
    │  │  ├─ videoKey.ts
    │  │  └─ videoObserver.ts
+   │  ├─ page/
+   │  │  └─ mediaCaptureHook.ts
    │  ├─ popup/
    │  ├─ services/
    │  ├─ types/
+   │  ├─ shared/
+   │  │  └─ awemeMediaCapture.ts
    │  └─ utils/
    │     └─ mediaUrlPolicy.ts
    └─ tests/
@@ -138,15 +146,17 @@ Copy-Item .env.example .env
 [DouyinEnglish][DubPlayer]
 ```
 
-## Phase 5 手动验收
+## Phase 5/5.1 手动验收
 
 先启动后端，再重新构建并加载扩展。打开 Popup，确认“本地后端已连接”；随后开启 Debug Mode 和 English Mode，在抖音播放一条普通视频。
 
-1. Debug 面板应显示当前 `videoKey`、媒体来源策略和 `PROCESSING` 状态。
-2. 任务成功后状态变为 `READY`，并显示可访问的 `/audio/{task_id}/audio.wav` 地址。
-3. 打开该地址，确认 WAV 内容来自当前作品，而不是上一条或预加载视频。
-4. 连续快速切换视频，旧任务完成后不得覆盖当前视频的状态。
-5. 找不到可靠直链、遇到 HLS/DASH、签名失效或后端失败时，应显示来源不可用或 `ERROR`，原视频仍正常播放。
+1. 普通直链视频应显示 `Source provider: video-element`；成功绑定的 `blob:` 视频应显示 `Source provider: aweme-response` 和 `Source confidence: bound`。
+2. Debug 面板中的 `Task` 应由 `none` 变为任务 ID，`Extraction` 依次进入 `PROCESSING`，最终进入 `READY`。`SUBMITTING` 很短，未观察到不代表失败。
+3. 任务成功后应显示可访问的 `/audio/{task_id}/audio.wav` 地址；磁盘中应存在 `backend/output/audio/{task_id}/audio.wav`。
+4. 打开该地址，确认 WAV 内容来自当前作品，而不是上一条或预加载视频。
+5. 连续快速切换视频，旧任务完成后不得覆盖当前视频的状态。
+6. 首选 CDN 地址被拒绝且响应中有备用地址时，扩展可以受控重提；最终仍失败时，错误中会显示安全的 HTTP 状态码，但不会显示签名参数。
+7. 找不到可靠绑定、遇到 HLS/DASH、超限或后端失败时，应显示来源不可用或 `ERROR`，原视频仍正常播放。
 
 建议结合 Chrome DevTools 的 Network 面板验证至少 10 条普通视频：页面实际请求的资源、Debug 面板选中的 URL 和生成的 WAV 必须属于同一作品。Phase 5 只生成标准化 WAV，尚不会把它当作英文配音播放。
 
@@ -166,6 +176,6 @@ npm run generate:audio  # 用 Windows 系统英语语音重新生成测试 MP3
 
 播放器当前使用的音频仍是用于验证同步控制的循环测试素材，不是视频内容的翻译。Phase 5 新生成的 WAV 只用于后续 ASR 输入和独立验收，不会替换 Phase 3 的测试音轨，也不需要任何 AI API Key。
 
-抖音页面结构和 CDN 策略会持续变化。检测逻辑不依赖某个固定 CSS class，但真实页面仍可能出现全屏播放器、直播、广告、特殊卡片、`blob:`、HLS/DASH、过期签名或需要登录态的媒体地址。`blob:` 的 Performance Resource 适配器已隔离保留，但默认禁用，直到能建立与当前视频的可靠因果绑定。实现会在来源不确定时拒绝猜测；不会导出 Cookie、绕过 DRM 或让 FFmpeg 访问远程清单。
+抖音页面结构和 CDN 策略会持续变化。检测逻辑不依赖某个固定 CSS class，但真实页面仍可能出现全屏播放器、直播、广告、特殊卡片、Worker 内请求、导航 HTML 中的初始数据、HLS/DASH、过期签名或需要登录态的媒体地址。Phase 5.1 只捕获顶层页面 `fetch`/XHR 返回的目标 JSON；未建立作品级因果绑定时会拒绝猜测。Performance Resource 适配器仍隔离保留且默认禁用；实现不会导出 Cookie、绕过 DRM 或让 FFmpeg 访问远程清单。
 
 下一阶段是 **Phase 6 ASR**：把 Phase 5 生成的 WAV 交给可替换的 ASR Provider，并得到包含 `start`、`end` 和中文 `text` 的时间戳分段。在真实 Chrome 完成 Phase 5 人工验收前，不进入 Phase 6。

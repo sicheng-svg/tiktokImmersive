@@ -32,8 +32,8 @@ describe("AudioSourceResolver", () => {
       new PerformanceResourceSourceProvider(() => candidates, () => 100),
     ]);
 
-    expect(resolver.resolve(createVideo("https://media.example/direct.mp4")).source).toEqual({
-      url: "https://media.example/direct.mp4",
+    expect(resolver.resolve(createVideo("https://v1.douyinvod.com/direct.mp4")).source).toEqual({
+      url: "https://v1.douyinvod.com/direct.mp4",
       provider: "video-element",
       confidence: "direct",
     });
@@ -121,13 +121,13 @@ describe("AudioSourceResolver", () => {
   it("rejects HTTP, non-443, HLS, and DASH sources", () => {
     const provider = new DirectVideoSourceProvider();
 
-    expect(provider.resolve(createVideo("http://media.example/video.mp4"))).toBeNull();
-    expect(provider.resolve(createVideo("https://media.example:8443/video.mp4"))).toBeNull();
-    expect(provider.resolve(createVideo("https://media.example/master.m3u8?token=abc"))).toBeNull();
-    expect(provider.resolve(createVideo("https://media.example/manifest.mpd"))).toBeNull();
-    expect(provider.resolve(createVideo("https://media.example/live%2Em3u8"))).toBeNull();
-    expect(provider.resolve(createVideo("https://media.example:443/video.mp4"))).toMatchObject({
-      url: "https://media.example/video.mp4",
+    expect(provider.resolve(createVideo("http://v1.douyinvod.com/video.mp4"))).toBeNull();
+    expect(provider.resolve(createVideo("https://v1.douyinvod.com:8443/video.mp4"))).toBeNull();
+    expect(provider.resolve(createVideo("https://v1.douyinvod.com/master.m3u8?token=abc"))).toBeNull();
+    expect(provider.resolve(createVideo("https://v1.douyinvod.com/manifest.mpd"))).toBeNull();
+    expect(provider.resolve(createVideo("https://v1.douyinvod.com/live%2Em3u8"))).toBeNull();
+    expect(provider.resolve(createVideo("https://v1.douyinvod.com:443/video.mp4"))).toMatchObject({
+      url: "https://v1.douyinvod.com/video.mp4",
       confidence: "direct",
     });
   });

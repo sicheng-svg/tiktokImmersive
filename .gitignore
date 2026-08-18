@@ -1,6 +1,7 @@
 node_modules/
 extension/node_modules/
 extension/dist/
+extension/dist-*/
 extension/coverage/
 *.log
 .DS_Store

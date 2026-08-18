@@ -1,5 +1,5 @@
 import type { VideoProcessingRequest } from "../types/videoProcessing";
-import { normalizeSecureMediaUrl } from "../utils/mediaUrlPolicy";
+import { normalizeDouyinMediaUrl } from "../utils/mediaUrlPolicy";
 
 interface MessageSenderLike {
   tab?: { url?: string };
@@ -20,7 +20,7 @@ export function isTrustedDouyinSender(sender: MessageSenderLike): boolean {
 
 function isSafeMediaUrl(value: unknown): value is string {
   if (typeof value !== "string" || value.length > 8_192) return false;
-  return normalizeSecureMediaUrl(value) !== null;
+  return normalizeDouyinMediaUrl(value) !== null;
 }
 
 export function isVideoProcessingMessage(value: unknown): value is VideoProcessingRequest {
