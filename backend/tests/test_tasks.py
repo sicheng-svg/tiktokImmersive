@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from app.services.language_processing.models import SubtitleSegment, TranscriptSegment
 from app.services.media_processor import ProcessingCapacityError
 from app.services.task_store import TaskStore
 
@@ -46,6 +47,31 @@ class BlockingFullMediaProcessor:
         raise ProcessingCapacityError("Media processing queue is full")
 
 
+def complete_task(store: TaskStore, task_id: str) -> None:
+    audio_url = f"/audio/{task_id}/audio.wav"
+    transcript = (
+        TranscriptSegment(
+            segment_id="s000001",
+            start=0.0,
+            end=1.0,
+            text="测试字幕",
+        ),
+    )
+    subtitles = (
+        SubtitleSegment(
+            segment_id="s000001",
+            start=0.0,
+            end=1.0,
+            zh="测试字幕",
+            en="Test subtitle",
+        ),
+    )
+    store.mark_extracting(task_id)
+    store.mark_transcribing(task_id, audio_url)
+    store.mark_transcript_ready(task_id, transcript, cache_hit=False)
+    store.mark_ready(task_id, subtitles, translation_cache_hit=False)
+
+
 def test_create_and_query_task(client: TestClient) -> None:
     create_response = client.post(
         "/api/videos/process",
@@ -58,6 +84,7 @@ def test_create_and_query_task(client: TestClient) -> None:
     assert create_response.status_code == 202
     created = create_response.json()
     assert created["status"] == "PROCESSING"
+    assert created["task_reused"] is False
     assert len(created["task_id"]) == 32
 
     task_response = client.get(f"/api/tasks/{created['task_id']}")
@@ -65,7 +92,14 @@ def test_create_and_query_task(client: TestClient) -> None:
     assert task_response.json() == {
         "task_id": created["task_id"],
         "status": "PROCESSING",
+        "stage": "FETCHING",
         "progress": 0,
+        "steps": {
+            "asr": {"status": "PENDING", "cache_hit": None},
+            "translation": {"status": "PENDING", "cache_hit": None},
+        },
+        "transcript": [],
+        "subtitles": [],
         "audio_url": None,
         "error": None,
         "segments": [],
@@ -77,6 +111,26 @@ def test_unknown_task_returns_404(client: TestClient) -> None:
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Task not found"}
+
+
+def test_openapi_marks_all_phase_six_response_fields_as_required(client: TestClient) -> None:
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+
+    assert set(schemas["TaskResponse"]["required"]) == {
+        "task_id",
+        "status",
+        "stage",
+        "progress",
+        "steps",
+        "transcript",
+        "subtitles",
+        "segments",
+        "audio_url",
+        "error",
+    }
+    assert "task_reused" in schemas["ProcessVideoResponse"]["required"]
+    assert set(schemas["TaskStepsResponse"]["required"]) == {"asr", "translation"}
+    assert set(schemas["TaskStepResponse"]["required"]) == {"status", "cache_hit"}
 
 
 def test_request_validation_rejects_invalid_inputs(client: TestClient) -> None:
@@ -180,7 +234,7 @@ def test_error_or_changed_url_creates_a_new_task() -> None:
 
     store.mark_error(first.task_id, "failed")
     retry, retry_created = store.create_or_get("same:key", "https://example.com/one")
-    store.mark_ready(retry.task_id, f"/audio/{retry.task_id}/audio.wav")
+    complete_task(store, retry.task_id)
     ready_duplicate, ready_duplicate_created = store.create_or_get(
         "same:key",
         "https://example.com/one",
@@ -212,6 +266,8 @@ def test_api_deduplicates_submissions_but_retries_error_and_changed_url(tmp_path
         first = client.post("/api/videos/process", json=first_payload).json()
         duplicate = client.post("/api/videos/process", json=first_payload).json()
         assert duplicate["task_id"] == first["task_id"]
+        assert first["task_reused"] is False
+        assert duplicate["task_reused"] is True
         assert processor.task_ids == [first["task_id"]]
 
         store.mark_error(first["task_id"], "failed")
@@ -228,6 +284,43 @@ def test_api_deduplicates_submissions_but_retries_error_and_changed_url(tmp_path
         assert changed["task_id"] not in {first["task_id"], retry["task_id"]}
 
     assert processor.task_ids == [first["task_id"], retry["task_id"], changed["task_id"]]
+
+
+def test_post_reuses_ready_task_with_complete_result_but_get_has_no_transient_flag(
+    tmp_path,
+) -> None:
+    store = TaskStore()
+    processor = CountingMediaProcessor()
+    app = create_app(
+        Settings(
+            audio_dir=tmp_path / "audio",
+            media_temp_dir=tmp_path / "temp",
+            language_cache_dir=tmp_path / "cache",
+        ),
+        task_store=store,
+        media_processor=processor,
+    )
+    payload = {
+        "video_key": "ready:reuse",
+        "video_url": "https://cdn.douyinvod.com/ready",
+    }
+
+    with TestClient(app, base_url="http://localhost") as client:
+        first = client.post("/api/videos/process", json=payload).json()
+        complete_task(store, first["task_id"])
+        reused = client.post("/api/videos/process", json=payload).json()
+        fetched = client.get(f"/api/tasks/{first['task_id']}").json()
+
+    assert reused["task_reused"] is True
+    assert reused["status"] == "READY"
+    assert reused["stage"] == "READY"
+    assert reused["transcript"][0]["text"] == "测试字幕"
+    assert reused["subtitles"][0]["en"] == "Test subtitle"
+    assert reused["steps"]["asr"]["cache_hit"] is False
+    assert reused["steps"]["translation"]["cache_hit"] is False
+    assert "task_reused" not in fetched
+    assert fetched == {key: value for key, value in reused.items() if key != "task_reused"}
+    assert processor.task_ids == [first["task_id"]]
 
 
 def test_concurrent_api_requests_submit_only_one_task(tmp_path) -> None:

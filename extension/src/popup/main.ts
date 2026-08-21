@@ -12,12 +12,12 @@ const popupRoot = app;
 popupRoot.innerHTML = `
   <main class="popup-shell">
     <header>
-      <p class="eyebrow">DOUYIN ENGLISH</p>
-      <h1>English Mode</h1>
+      <p class="eyebrow">DOUYIN SUBTITLES</p>
+      <h1>双语字幕</h1>
     </header>
     <label class="switch-row">
-      <span>英文配音</span>
-      <input id="enabled" type="checkbox" role="switch" aria-label="English Mode" />
+      <span>智能字幕</span>
+      <input id="enabled" type="checkbox" role="switch" aria-label="智能字幕总开关" />
       <span class="switch" aria-hidden="true"></span>
     </label>
     <fieldset>
@@ -26,15 +26,6 @@ popupRoot.innerHTML = `
       <label><input name="subtitle" type="radio" value="english" /> 仅英文</label>
       <label><input name="subtitle" type="radio" value="off" /> 关闭</label>
     </fieldset>
-    <label class="select-row" for="playbackRate">
-      <span>英文语速</span>
-      <select id="playbackRate">
-        <option value="0.85">0.85x</option>
-        <option value="1">1.0x</option>
-        <option value="1.15">1.15x</option>
-        <option value="1.35">1.35x</option>
-      </select>
-    </label>
     <label class="debug-row"><input id="debug" type="checkbox" /> Debug Mode</label>
     <section class="status-card" aria-live="polite">
       <span class="status-dot"></span>
@@ -48,7 +39,6 @@ popupRoot.innerHTML = `
 `;
 
 const enabledInput = popupRoot.querySelector<HTMLInputElement>("#enabled")!;
-const rateSelect = popupRoot.querySelector<HTMLSelectElement>("#playbackRate")!;
 const debugInput = popupRoot.querySelector<HTMLInputElement>("#debug")!;
 const statusText = popupRoot.querySelector<HTMLElement>("#status")!;
 const backendStatusText = popupRoot.querySelector<HTMLElement>("#backend-status")!;
@@ -81,7 +71,6 @@ async function checkBackendHealth(): Promise<void> {
 
 function render(nextSettings: ExtensionSettings): void {
   enabledInput.checked = nextSettings.enabled;
-  rateSelect.value = String(nextSettings.playbackRate);
   debugInput.checked = nextSettings.debug;
   const subtitle = popupRoot.querySelector<HTMLInputElement>(
     `input[name="subtitle"][value="${nextSettings.subtitleMode}"]`,
@@ -137,10 +126,6 @@ popupRoot.querySelectorAll<HTMLInputElement>('input[name="subtitle"]').forEach((
   input.addEventListener("change", () => {
     void persistAndNotify({ ...settings, subtitleMode: input.value as SubtitleMode });
   });
-});
-
-rateSelect.addEventListener("change", () => {
-  void persistAndNotify({ ...settings, playbackRate: Number(rateSelect.value) });
 });
 
 debugInput.addEventListener("change", () => {

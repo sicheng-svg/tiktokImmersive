@@ -22,7 +22,7 @@ def process_video(
     media_processor: Annotated[MediaTaskProcessor, Depends(get_media_processor)],
 ) -> ProcessVideoResponse:
     try:
-        record, _created = task_store.create_or_get_and_submit(
+        record, created = task_store.create_or_get_and_submit(
             video_key=payload.video_key,
             video_url=str(payload.video_url),
             submit=media_processor.submit,
@@ -33,4 +33,5 @@ def process_video(
             detail=str(exc),
             headers={"Retry-After": "5"},
         ) from exc
-    return ProcessVideoResponse(task_id=record.task_id, status=record.status)
+    latest = task_store.get(record.task_id) or record
+    return latest.to_process_response(task_reused=not created)

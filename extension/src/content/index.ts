@@ -4,8 +4,7 @@ import { createLogger } from "../utils/logger";
 import { AudioSourceResolver, BoundAwemeSourceProvider, DirectVideoSourceProvider } from "./audioSourceProvider";
 import { getCapturedAwemeSourceRegistry } from "./capturedAwemeSources";
 import { DebugPanel } from "./debugPanel";
-import { DubPlayer } from "./dubPlayer";
-import { VideoAudioController, type MockPlaybackStatus } from "./videoAudioController";
+import { SubtitleOverlay } from "./subtitleOverlay";
 import { VideoDetector } from "./videoDetector";
 import { ChromeVideoTaskTransport, VideoProcessingCoordinator } from "./videoProcessingCoordinator";
 
@@ -13,66 +12,74 @@ const logger = createLogger("Content");
 let settings: ExtensionSettings = DEFAULT_SETTINGS;
 const detector = new VideoDetector();
 const capturedAwemeSources = getCapturedAwemeSourceRegistry();
-const dubPlayer = new DubPlayer();
 const debugPanel = new DebugPanel();
+const subtitleOverlay = new SubtitleOverlay();
 let status: ContentStatus = {
   enabled: false,
   state: "IDLE",
-  message: "English Mode is off",
+  message: "智能字幕已关闭",
 };
-let playbackStatus: MockPlaybackStatus = { state: "IDLE", message: "English Mode is off" };
-let processingStatus: VideoProcessingStatus = { state: "IDLE", message: "Media extraction is off" };
+let processingStatus: VideoProcessingStatus = { state: "IDLE", message: "智能字幕已关闭" };
+
+function getContentState(): ContentStatus["state"] {
+  if (!settings.enabled) return "IDLE";
+  if (processingStatus.state === "READY") {
+    return processingStatus.legacyMediaReady ? "LEGACY_BACKEND" : "SUBTITLES_READY";
+  }
+  if (processingStatus.state === "DEGRADED") return "DEGRADED";
+  if (processingStatus.state === "ERROR" || processingStatus.state === "SOURCE_UNAVAILABLE") return "ERROR";
+  if (processingStatus.state === "PROCESSING" || processingStatus.state === "SUBMITTING") return "PROCESSING";
+  return "DETECTING";
+}
 
 function publishStatus(): void {
-  const debug = audioController.getDebugSnapshot();
-  const processingMessage = processingStatus.state === "IDLE" ? "" : ` · ${processingStatus.message}`;
+  const active = detector.getActiveVideo();
   status = {
     enabled: settings.enabled,
-    state:
-      playbackStatus.state === "PLAYING"
-        ? "MOCK_PLAYING"
-        : playbackStatus.state === "ERROR"
-          ? "ERROR"
-          : playbackStatus.state === "READY"
-            ? "MOCK_READY"
-            : settings.enabled
-              ? "DETECTING"
-              : "IDLE",
-    message: `${playbackStatus.message}${processingMessage}`,
-    videoKey: playbackStatus.videoKey ?? processingStatus.videoKey,
+    state: getContentState(),
+    message: settings.enabled ? processingStatus.message : "智能字幕已关闭",
+    videoKey: processingStatus.videoKey ?? active?.videoKey,
     debug: {
-      videoUrl: debug.videoUrl,
-      videoTime: debug.videoTime,
-      dubTime: debug.dubTime,
-      syncOffset: debug.syncOffset,
+      videoTime: active?.element.currentTime ?? 0,
+      playing: Boolean(active && !active.element.paused && !active.element.ended),
       processingState: processingStatus.state,
-      sourceUrl: processingStatus.sourceUrl,
-      sourceProvider: processingStatus.sourceProvider,
-      sourceConfidence: processingStatus.sourceConfidence,
+      stage: processingStatus.stage,
       taskId: processingStatus.taskId,
       progress: processingStatus.progress,
-      backendAudioUrl: processingStatus.audioUrl,
+      transcriptCount: processingStatus.transcript?.length ?? 0,
+      subtitleCount: processingStatus.subtitles?.length ?? 0,
+      taskReused: processingStatus.taskReused,
+      asrCacheHit: processingStatus.steps?.asr.cacheHit,
+      translationCacheHit: processingStatus.steps?.translation.cacheHit,
       backendError: processingStatus.error,
     },
   };
-  debugPanel.update(status, audioController.getDebugSnapshot());
+  debugPanel.update(status);
   void chrome.runtime.sendMessage({ type: "CONTENT_STATUS_UPDATED", status } satisfies ExtensionMessage).catch(() => {
     // The popup is normally closed, so having no message receiver is expected.
   });
 }
 
-function handlePlaybackStatus(nextPlaybackStatus: MockPlaybackStatus): void {
-  // Keep Phase 3 mock playback authoritative; extraction only augments its status.
-  playbackStatus = nextPlaybackStatus;
-  publishStatus();
+function applyOverlayStatus(nextStatus: VideoProcessingStatus): void {
+  if (!settings.enabled) {
+    subtitleOverlay.clearCues();
+    return;
+  }
+  if (nextStatus.state === "READY" && !nextStatus.legacyMediaReady && nextStatus.subtitles?.length) {
+    subtitleOverlay.showSubtitles(nextStatus.subtitles);
+    return;
+  }
+  if (
+    (nextStatus.state === "DEGRADED" ||
+      (nextStatus.state === "PROCESSING" && nextStatus.stage === "TRANSLATING")) &&
+    nextStatus.transcript?.length
+  ) {
+    subtitleOverlay.showTranscript(nextStatus.transcript);
+    return;
+  }
+  subtitleOverlay.clearCues();
 }
 
-const audioController = new VideoAudioController(
-  dubPlayer,
-  chrome.runtime.getURL("audio/test.mp3"),
-  DEFAULT_SETTINGS,
-  handlePlaybackStatus,
-);
 const processingCoordinator = new VideoProcessingCoordinator(
   new AudioSourceResolver([
     new DirectVideoSourceProvider(),
@@ -81,12 +88,17 @@ const processingCoordinator = new VideoProcessingCoordinator(
   new ChromeVideoTaskTransport(),
   (nextStatus) => {
     processingStatus = nextStatus;
+    applyOverlayStatus(nextStatus);
     publishStatus();
   },
 );
 
 capturedAwemeSources.subscribe((updatedAwemeIds) => {
-  if (processingStatus.state !== "SOURCE_UNAVAILABLE" && processingStatus.state !== "ERROR") return;
+  const mayRetry =
+    processingStatus.state === "SOURCE_UNAVAILABLE" ||
+    (processingStatus.state === "ERROR" &&
+      (processingStatus.stage === undefined || processingStatus.stage === "FETCHING"));
+  if (!mayRetry) return;
   const active = detector.getActiveVideo();
   const awemeId = active?.boundAwemeId ?? null;
   if (!active || !awemeId || !updatedAwemeIds.has(awemeId)) return;
@@ -96,11 +108,15 @@ capturedAwemeSources.subscribe((updatedAwemeIds) => {
     .evaluateNow()
     .then(() => {
       const refreshed = detector.getActiveVideo();
+      const stillMayRetry =
+        processingStatus.state === "SOURCE_UNAVAILABLE" ||
+        (processingStatus.state === "ERROR" &&
+          (processingStatus.stage === undefined || processingStatus.stage === "FETCHING"));
       if (
         refreshed?.element === activeElement &&
         refreshed.videoKey === activeVideoKey &&
         refreshed.boundAwemeId === awemeId &&
-        (processingStatus.state === "SOURCE_UNAVAILABLE" || processingStatus.state === "ERROR")
+        stillMayRetry
       ) {
         processingCoordinator.retry();
       }
@@ -109,16 +125,19 @@ capturedAwemeSources.subscribe((updatedAwemeIds) => {
 });
 
 function applySettings(nextSettings: ExtensionSettings): void {
+  const wasEnabled = settings.enabled;
   settings = nextSettings;
   document.documentElement.dataset.douyinEnglishMode = settings.enabled ? "on" : "off";
   debugPanel.setVisible(settings.debug);
-  audioController.updateSettings(settings);
+  subtitleOverlay.setMode(settings.enabled ? settings.subtitleMode : "off");
+  if (!settings.enabled && wasEnabled) subtitleOverlay.clearCues();
   processingCoordinator.setEnabled(settings.enabled);
-  logger.info(`English Mode ${settings.enabled ? "enabled" : "disabled"}`);
+  publishStatus();
+  logger.info(`Smart subtitles ${settings.enabled ? "enabled" : "disabled"}`);
 }
 
 detector.onActiveVideoChanged((current) => {
-  audioController.setActiveVideo(current);
+  subtitleOverlay.setActiveVideo(current);
   processingCoordinator.setActiveVideo(current);
 });
 
@@ -132,10 +151,10 @@ function startRuntime(): void {
   processingCoordinator.setEnabled(settings.enabled);
   debugPanel.setVisible(settings.debug);
   debugRefreshTimer = window.setInterval(() => {
-    if (settings.debug) debugPanel.update(status, audioController.getDebugSnapshot());
+    if (settings.debug) publishStatus();
   }, 250);
   if (settings.enabled && !detector.getActiveVideo()) {
-    playbackStatus = { state: "IDLE", message: "Waiting for the active video" };
+    processingStatus = { state: "IDLE", message: "正在等待可处理的视频" };
     publishStatus();
   }
 }
@@ -144,7 +163,7 @@ function stopRuntime(): void {
   if (!runtimeRunning) return;
   runtimeRunning = false;
   processingCoordinator.stop();
-  audioController.stop();
+  subtitleOverlay.stop();
   detector.stop();
   debugPanel.destroy();
   if (debugRefreshTimer !== null) {

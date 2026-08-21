@@ -1,8 +1,11 @@
 import type { ContentStatus } from "../types";
-import type { PlaybackDebugSnapshot } from "./videoAudioController";
 
 function formatSeconds(value: number): string {
   return `${value.toFixed(2)}s`;
+}
+
+function formatCacheHit(value: boolean | null | undefined): string {
+  return value === true ? "hit" : value === false ? "miss" : "unknown";
 }
 
 export class DebugPanel {
@@ -17,24 +20,24 @@ export class DebugPanel {
     this.ensureElement();
   }
 
-  update(status: ContentStatus, snapshot: PlaybackDebugSnapshot): void {
+  update(status: ContentStatus): void {
     if (!this.element) return;
+    const debug = status.debug;
     const lines = [
-      `Video: ${snapshot.videoKey ?? "none"}`,
+      `Video: ${status.videoKey ?? "none"}`,
       `Status: ${status.state}`,
-      `Video time: ${formatSeconds(snapshot.videoTime)}`,
-      `Dub time: ${formatSeconds(snapshot.dubTime)}`,
-      `Offset: ${snapshot.syncOffset >= 0 ? "+" : ""}${formatSeconds(snapshot.syncOffset)}`,
-      `Playing: ${snapshot.playing ? "yes" : "no"}`,
-      `URL: ${snapshot.videoUrl ?? "unavailable"}`,
-      `Extraction: ${status.debug?.processingState ?? "IDLE"}`,
-      `Source provider: ${status.debug?.sourceProvider ?? "unavailable"}`,
-      `Source confidence: ${status.debug?.sourceConfidence ?? "unavailable"}`,
-      `Source URL: ${status.debug?.sourceUrl ?? "unavailable"}`,
-      `Task: ${status.debug?.taskId ?? "none"}`,
-      `Progress: ${status.debug?.progress ?? "unknown"}`,
-      `Backend audio: ${status.debug?.backendAudioUrl ?? "not ready"}`,
-      `Backend error: ${status.debug?.backendError ?? "none"}`,
+      `Video time: ${formatSeconds(debug?.videoTime ?? 0)}`,
+      `Playing: ${debug?.playing ? "yes" : "no"}`,
+      `Processing: ${debug?.processingState ?? "IDLE"}`,
+      `Stage: ${debug?.stage ?? "none"}`,
+      `Task: ${debug?.taskId ?? "none"}`,
+      `Progress: ${debug?.progress ?? "unknown"}`,
+      `Transcript segments: ${debug?.transcriptCount ?? 0}`,
+      `Subtitle segments: ${debug?.subtitleCount ?? 0}`,
+      `Task reused: ${debug?.taskReused === undefined ? "unknown" : debug.taskReused ? "yes" : "no"}`,
+      `ASR cache: ${formatCacheHit(debug?.asrCacheHit)}`,
+      `Translation cache: ${formatCacheHit(debug?.translationCacheHit)}`,
+      `Backend error: ${debug?.backendError ?? "none"}`,
     ];
     this.element.textContent = lines.join("\n");
   }

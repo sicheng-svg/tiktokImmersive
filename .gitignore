@@ -14,6 +14,7 @@ backend/.coverage
 backend/htmlcov/
 backend/.env
 backend/temp/
+backend/cache/
 backend/output/audio/*
 !backend/output/audio/.gitkeep
 __pycache__/

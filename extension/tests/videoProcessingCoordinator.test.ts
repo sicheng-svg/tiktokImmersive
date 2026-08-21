@@ -37,15 +37,35 @@ async function flushPromises(): Promise<void> {
 }
 
 describe("VideoProcessingCoordinator", () => {
-  it("submits, polls, and exposes READY audio without playing it", async () => {
+  it("submits, polls through ASR, and exposes bilingual subtitles", async () => {
     const statuses: VideoProcessingStatus[] = [];
     const transport: VideoTaskTransport = {
-      start: vi.fn().mockResolvedValue({ taskId: "task-1", status: "PROCESSING", progress: 10 }),
+      start: vi.fn().mockResolvedValue({
+        taskId: "task-1",
+        status: "PROCESSING",
+        stage: "TRANSCRIBING",
+        progress: 65,
+        steps: {
+          asr: { status: "PROCESSING", cacheHit: null },
+          translation: { status: "PENDING", cacheHit: null },
+        },
+        transcript: [],
+        subtitles: [],
+        segments: [],
+        taskReused: false,
+      }),
       get: vi.fn().mockResolvedValue({
         taskId: "task-1",
         status: "READY",
+        stage: "READY",
         progress: 100,
-        audioUrl: "/audio/task-1.wav",
+        steps: {
+          asr: { status: "READY", cacheHit: false },
+          translation: { status: "READY", cacheHit: true },
+        },
+        transcript: [{ segmentId: "s000001", start: 0, end: 1, text: "你好" }],
+        subtitles: [{ segmentId: "s000001", start: 0, end: 1, zh: "你好", en: "Hello" }],
+        segments: [],
       }),
     };
     let scheduled: (() => void) | undefined;
@@ -61,14 +81,22 @@ describe("VideoProcessingCoordinator", () => {
     coordinator.setActiveVideo(createActiveVideo("video-1", "https://v1.douyinvod.com/one.mp4"));
     coordinator.setEnabled(true);
     await flushPromises();
-    expect(statuses.at(-1)).toMatchObject({ state: "PROCESSING", taskId: "task-1", progress: 10 });
+    expect(statuses.at(-1)).toMatchObject({
+      state: "PROCESSING",
+      taskId: "task-1",
+      stage: "TRANSCRIBING",
+      progress: 65,
+      taskReused: false,
+      message: "正在识别中文",
+    });
 
     scheduled?.();
     await flushPromises();
     expect(statuses.at(-1)).toMatchObject({
       state: "READY",
-      audioUrl: "/audio/task-1.wav",
-      message: expect.stringContaining("not played"),
+      message: "双语字幕就绪",
+      subtitles: [{ en: "Hello" }],
+      taskReused: false,
     });
   });
 
@@ -99,6 +127,36 @@ describe("VideoProcessingCoordinator", () => {
     expect(statuses.some((status) => status.taskId === "task-a")).toBe(false);
   });
 
+  it("continues polling legacy PROCESSING and marks legacy READY as upgrade-only", async () => {
+    const statuses: VideoProcessingStatus[] = [];
+    const transport: VideoTaskTransport = {
+      start: vi.fn().mockResolvedValue({ taskId: "legacy", status: "PROCESSING", progress: 40 }),
+      get: vi.fn().mockResolvedValue({ taskId: "legacy", status: "READY", progress: 100 }),
+    };
+    let scheduled: (() => void) | undefined;
+    const coordinator = new VideoProcessingCoordinator(
+      new AudioSourceResolver([new DirectVideoSourceProvider()]),
+      transport,
+      (next) => statuses.push(next),
+      1,
+      5,
+      { set: (callback) => ((scheduled = callback), 1), clear: vi.fn() },
+    );
+
+    coordinator.setActiveVideo(createActiveVideo("legacy", "https://v1.douyinvod.com/legacy.mp4"));
+    coordinator.setEnabled(true);
+    await flushPromises();
+    expect(statuses.at(-1)).toMatchObject({ state: "PROCESSING", message: "旧版后端正在处理媒体" });
+
+    scheduled?.();
+    await flushPromises();
+    expect(statuses.at(-1)).toMatchObject({
+      state: "READY",
+      legacyMediaReady: true,
+      message: "后端版本过旧，请升级后使用字幕",
+    });
+  });
+
   it("deduplicates the same videoKey and fails gracefully when no source is available", async () => {
     const statuses: VideoProcessingStatus[] = [];
     const transport: VideoTaskTransport = {
@@ -122,7 +180,7 @@ describe("VideoProcessingCoordinator", () => {
     expect(statuses.at(-1)).toMatchObject({
       state: "SOURCE_UNAVAILABLE",
       videoKey: "B",
-      message: expect.stringContaining("mock playback is unchanged"),
+      message: "暂时无法获取当前视频源",
     });
   });
 
@@ -209,6 +267,7 @@ describe("VideoProcessingCoordinator", () => {
       .mockResolvedValueOnce({
         taskId: "task-primary",
         status: "ERROR",
+        stage: "FETCHING",
         error: "Media server rejected the download (HTTP 403)",
       })
       .mockResolvedValueOnce({ taskId: "task-backup", status: "READY", audioUrl: "/audio/backup.wav" });
@@ -266,5 +325,87 @@ describe("VideoProcessingCoordinator", () => {
 
     expect(start).toHaveBeenCalledTimes(1);
     expect(statuses.at(-1)).toMatchObject({ state: "ERROR", error: "Streaming manifests are not supported" });
+  });
+
+  it("emits a Chinese-only degraded result when translation fails and never retries a CDN", async () => {
+    const awemeId = "7382738211234567899";
+    const registry = new CapturedAwemeSourceRegistry();
+    registry.ingest(
+      createMediaCaptureMessage([
+        {
+          awemeId,
+          urls: [
+            "https://v1.douyinvod.com/video/primary.mp4",
+            "https://v2.douyinvod.com/video/backup.mp4",
+          ],
+        },
+      ]),
+    );
+    const container = document.createElement("div");
+    container.dataset.e2e = "feed-active-video";
+    container.dataset.e2eVid = awemeId;
+    const video = document.createElement("video");
+    container.append(video);
+    document.body.append(container);
+    const statuses: VideoProcessingStatus[] = [];
+    const start = vi.fn().mockResolvedValue({
+      taskId: "task-translation-error",
+      status: "ERROR",
+      stage: "TRANSLATING",
+      progress: 85,
+      error: "Media download failed: misleading translation error",
+      steps: {
+        asr: { status: "READY", cacheHit: false },
+        translation: { status: "ERROR", cacheHit: false },
+      },
+      transcript: [{ segmentId: "s000001", start: 0, end: 1, text: "中文可用" }],
+      subtitles: [],
+      segments: [],
+    });
+    const coordinator = new VideoProcessingCoordinator(
+      new AudioSourceResolver([new BoundAwemeSourceProvider(registry)]),
+      { start, get: vi.fn() },
+      (next) => statuses.push(next),
+    );
+
+    coordinator.setActiveVideo(createActiveVideo(awemeId, "blob:https://www.douyin.com/a", awemeId, video));
+    coordinator.setEnabled(true);
+    await flushPromises();
+
+    expect(start).toHaveBeenCalledTimes(1);
+    expect(statuses.at(-1)).toMatchObject({
+      state: "DEGRADED",
+      stage: "TRANSLATING",
+      message: "翻译失败，已降级为中文字幕",
+      transcript: [{ text: "中文可用" }],
+    });
+  });
+
+  it("rejects a late result when a reused element changes only its aweme binding", async () => {
+    const pending = deferred<VideoTask>();
+    const element = document.createElement("video");
+    const statuses: VideoProcessingStatus[] = [];
+    const transport: VideoTaskTransport = {
+      start: vi
+        .fn()
+        .mockImplementationOnce(() => pending.promise)
+        .mockResolvedValueOnce({ taskId: "new-binding", status: "READY", legacyMediaReady: true }),
+      get: vi.fn(),
+    };
+    const coordinator = new VideoProcessingCoordinator(
+      new AudioSourceResolver([new DirectVideoSourceProvider()]),
+      transport,
+      (next) => statuses.push(next),
+    );
+    coordinator.setActiveVideo(createActiveVideo("same-key", "https://v1.douyinvod.com/a.mp4", "old", element));
+    coordinator.setEnabled(true);
+    coordinator.setActiveVideo(createActiveVideo("same-key", "https://v1.douyinvod.com/a.mp4", "new", element));
+    await flushPromises();
+
+    pending.resolve({ taskId: "old-binding", status: "READY", legacyMediaReady: true });
+    await flushPromises();
+
+    expect(statuses.at(-1)).toMatchObject({ taskId: "new-binding", legacyMediaReady: true });
+    expect(statuses.some((next) => next.taskId === "old-binding")).toBe(false);
   });
 });
