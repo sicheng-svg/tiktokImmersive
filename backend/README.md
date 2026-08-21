@@ -1,6 +1,8 @@
-# Douyin English Backend — Phase 5
+# Douyin English Backend — Phase 6
 
-这是 MVP Phase 5 的媒体提取后端。`POST /api/videos/process` 创建后台任务，服务安全下载扩展提交的直链媒体，再调用 FFmpeg 生成单声道、16 kHz、16-bit PCM WAV。该阶段不包含 ASR、翻译或 TTS。
+这是 MVP Phase 6 的字幕后端（版本 `0.3.0`）。`POST /api/videos/process` 创建后台任务，服务安全下载扩展提交的直链媒体，调用 FFmpeg 生成单声道、16 kHz、16-bit PCM WAV，再执行中文 ASR、带完整有序上下文的 `zh → en` 翻译，并返回中英双语字幕。`segments` 继续保留给后续英文 TTS，当前始终为空。
+
+当前仓库只实现了确定性的 Fake ASR/Translation Provider，输出分别带有 `假转写` 和 `[FAKE TRANSLATION]` 标记，只用于本地开发与自动化测试。真实厂商 Adapter、真实准确度/成本 smoke test 尚未完成；将 `DOUYIN_ENGLISH_ASR_PROVIDER` 或 `DOUYIN_ENGLISH_TRANSLATION_PROVIDER` 改为非 `fake` 值会明确拒绝启动，不会把 Fake 伪装成真实服务。Provider 的 Key、独立显式代理、超时和重试字段已经预留在 `.env.example` 中，但 Fake 不访问网络，这些配置不代表真实 Provider 已接通。
 
 ## 环境
 
@@ -33,8 +35,8 @@ Copy-Item .env.example .env
 接口：
 
 - `GET /health`：健康检查
-- `POST /api/videos/process`：创建媒体提取任务，返回 `202` 和 `task_id`；相同 `video_key + video_url` 会复用未失败任务
-- `GET /api/tasks/{task_id}`：查询 `PROCESSING`、`READY` 或 `ERROR`
+- `POST /api/videos/process`：创建任务，返回 `202`、完整任务快照和必需的 `task_reused`；相同 `video_key + video_url` 会复用未失败任务
+- `GET /api/tasks/{task_id}`：查询完整任务快照，不返回仅属于本次 POST 的 `task_reused`
 - `GET /audio/{task_id}/audio.wav`：访问成功任务的 WAV 文件
 - `GET /docs`：OpenAPI 调试页面
 
@@ -55,7 +57,9 @@ $task = Invoke-RestMethod `
 Invoke-RestMethod "http://127.0.0.1:8000/api/tasks/$($task.task_id)"
 ```
 
-成功时，任务响应的 `audio_url` 指向生成的文件；失败时，`error` 返回不包含内部路径和 FFmpeg stderr 的简化错误。文件按 `task_id` 隔离，`video_key` 不参与本地路径构造。
+任务阶段依次为 `FETCHING / EXTRACTING / TRANSCRIBING / TRANSLATING / READY`，顶层状态保持 `PROCESSING / READY / ERROR`。`steps.asr` 和 `steps.translation` 始终显式存在，步骤状态为 `PENDING / PROCESSING / READY / ERROR / SKIPPED`。`cache_hit=true` 只表示实际使用了合法磁盘缓存，`false` 表示查找未命中后实际调用了 Provider，尚未检查或失败前未知时为 `null`；它与 `task_reused` 无关。
+
+成功时，`audio_url` 指向原中文 WAV，`transcript` 返回规范化中文分段，`subtitles` 返回严格一一对应的中英字幕。ASR 失败时不发布伪造 transcript；翻译失败时任务为 `ERROR/TRANSLATING`，但保留 WAV 和中文 transcript，`subtitles` 为空，客户端可降级显示中文字幕。公开 `error` 不包含内部路径、Provider 原始响应、正文、Key 或代理凭证。
 
 同一 `video_key` 和规范化后的同一 URL 在 `PROCESSING` 或 `READY` 状态下会原子复用任务，避免并发请求重复下载；原任务进入 `ERROR`，或相同 `video_key` 提交了不同 URL 时，会创建新任务。
 
@@ -82,8 +86,8 @@ Invoke-RestMethod "http://127.0.0.1:8000/api/tasks/$($task.task_id)"
 .\.venv\Scripts\python.exe -m pip check
 ```
 
-测试中的网络响应、DNS 和 FFmpeg 都使用 fake/mock，不访问真实外网，也不要求测试机安装 FFmpeg。覆盖任务状态推进、静态音频、SSRF 地址拒绝、重定向逐跳校验、连接对端校验、大小和时限、内容类型、FFmpeg 命令与 WAV 格式、并发容量、Origin 及 TrustedHost。
+测试中的网络响应、DNS、FFmpeg 和语言 Provider 都使用 fake/mock，不访问真实外网，也不要求测试机安装 FFmpeg。覆盖状态不变量、失败降级、READY 任务复用、严格 transcript/translation 校验、缓存损坏恢复、两层 single-flight、静态音频、SSRF 地址拒绝、重定向逐跳校验、连接对端校验、大小和时限、内容类型、FFmpeg 命令与 WAV 格式、有界关闭、并发容量、Origin 及 TrustedHost。
 
-当前任务数据仍保存在进程内存中，服务重启后任务元数据会丢失；生成的 WAV 不会自动清理。这两项属于后续持久化和生命周期管理范围。
+当前任务数据仍保存在进程内存中，服务重启后任务元数据会丢失；ASR 与 Translation 缓存分别原子写入 `backend/cache/asr` 和 `backend/cache/translation`，生成的 WAV 和缓存不会自动清理。任务持久化与生命周期清理属于后续范围。
 
 扩展会自动提交视频元素明确暴露的 HTTPS 直链。对 `blob:` 视频，Phase 5.1 只使用由抖音 aweme/feed 响应捕获、并与当前 DOM 作品 ID 和 `videoKey` 精确一致的媒体地址；全页面 Resource Timing 猜测仍默认禁用。一个作品响应中的多个合法 CDN 地址会按顺序保留，只有首选地址出现明确下载类错误时才会尝试备用地址。

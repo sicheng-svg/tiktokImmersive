@@ -3,8 +3,14 @@ from .video import (
     DubSegment,
     ProcessVideoRequest,
     ProcessVideoResponse,
+    SubtitleSegment,
     TaskResponse,
+    TaskStage,
+    TaskStepResponse,
+    TaskStepsResponse,
+    TaskStepStatus,
     TaskStatus,
+    TranscriptSegment,
 )
 
 __all__ = [
@@ -12,6 +18,12 @@ __all__ = [
     "HealthResponse",
     "ProcessVideoRequest",
     "ProcessVideoResponse",
+    "SubtitleSegment",
     "TaskResponse",
+    "TaskStage",
+    "TaskStepResponse",
+    "TaskStepsResponse",
+    "TaskStepStatus",
     "TaskStatus",
+    "TranscriptSegment",
 ]

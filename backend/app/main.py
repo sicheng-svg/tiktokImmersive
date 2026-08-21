@@ -13,6 +13,7 @@ from app.config import Settings
 from app.middleware import OriginGuardMiddleware
 from app.schemas.health import HealthResponse
 from app.services.ffmpeg import FfmpegAudioExtractor
+from app.services.language_processing.factory import build_language_processing_service
 from app.services.media_downloader import HttpMediaDownloader
 from app.services.media_processor import MediaTaskProcessor
 from app.services.task_store import TaskStore
@@ -27,25 +28,32 @@ def create_app(
     resolved_settings.audio_dir.mkdir(parents=True, exist_ok=True)
     resolved_settings.media_temp_dir.mkdir(parents=True, exist_ok=True)
     resolved_store = task_store or TaskStore()
-    resolved_processor = media_processor or MediaTaskProcessor(
-        task_store=resolved_store,
-        downloader=HttpMediaDownloader(
-            allowed_host_suffixes=resolved_settings.media_host_suffixes,
-            max_download_bytes=resolved_settings.media_max_download_bytes,
-            max_redirects=resolved_settings.media_max_redirects,
-            connect_timeout_seconds=resolved_settings.media_connect_timeout_seconds,
-            read_timeout_seconds=resolved_settings.media_read_timeout_seconds,
-            total_timeout_seconds=resolved_settings.media_total_timeout_seconds,
-        ),
-        audio_extractor=FfmpegAudioExtractor(
-            executable=resolved_settings.ffmpeg_binary,
-            timeout_seconds=resolved_settings.ffmpeg_timeout_seconds,
-        ),
-        media_temp_dir=resolved_settings.media_temp_dir,
-        audio_dir=resolved_settings.audio_dir,
-        max_concurrent_jobs=resolved_settings.max_concurrent_jobs,
-        max_pending_jobs=resolved_settings.max_pending_jobs,
-    )
+    if media_processor is None:
+        resolved_settings.language_cache_dir.mkdir(parents=True, exist_ok=True)
+        language_processor = build_language_processing_service(resolved_settings)
+        resolved_processor = MediaTaskProcessor(
+            task_store=resolved_store,
+            downloader=HttpMediaDownloader(
+                allowed_host_suffixes=resolved_settings.media_host_suffixes,
+                max_download_bytes=resolved_settings.media_max_download_bytes,
+                max_redirects=resolved_settings.media_max_redirects,
+                connect_timeout_seconds=resolved_settings.media_connect_timeout_seconds,
+                read_timeout_seconds=resolved_settings.media_read_timeout_seconds,
+                total_timeout_seconds=resolved_settings.media_total_timeout_seconds,
+            ),
+            audio_extractor=FfmpegAudioExtractor(
+                executable=resolved_settings.ffmpeg_binary,
+                timeout_seconds=resolved_settings.ffmpeg_timeout_seconds,
+            ),
+            language_processor=language_processor,
+            media_temp_dir=resolved_settings.media_temp_dir,
+            audio_dir=resolved_settings.audio_dir,
+            max_concurrent_jobs=resolved_settings.max_concurrent_jobs,
+            max_pending_jobs=resolved_settings.max_pending_jobs,
+            shutdown_grace_seconds=resolved_settings.shutdown_grace_seconds,
+        )
+    else:
+        resolved_processor = media_processor
     owns_processor = media_processor is None
 
     @asynccontextmanager
@@ -57,7 +65,7 @@ def create_app(
     application = FastAPI(
         title=resolved_settings.app_name,
         version=resolved_settings.app_version,
-        description="Phase 5 media extraction API for Douyin English.",
+        description="Phase 6 Chinese ASR, contextual translation, and subtitle API.",
         lifespan=lifespan,
     )
     application.state.settings = resolved_settings

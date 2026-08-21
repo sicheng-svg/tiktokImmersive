@@ -19,21 +19,28 @@ export type VideoStatus =
 
 export interface ContentStatus {
   enabled: boolean;
-  state: "IDLE" | "DETECTING" | "MOCK_READY" | "MOCK_PLAYING" | "ERROR";
+  state:
+    | "IDLE"
+    | "DETECTING"
+    | "PROCESSING"
+    | "SUBTITLES_READY"
+    | "DEGRADED"
+    | "LEGACY_BACKEND"
+    | "ERROR";
   message: string;
   videoKey?: string;
   debug?: {
-    videoUrl?: string;
     videoTime: number;
-    dubTime: number;
-    syncOffset: number;
+    playing: boolean;
     processingState?: import("./videoProcessing").VideoProcessingState;
-    sourceUrl?: string;
-    sourceProvider?: string;
-    sourceConfidence?: "direct" | "bound" | "heuristic";
+    stage?: import("./videoProcessing").TaskStage;
     taskId?: string;
     progress?: number;
-    backendAudioUrl?: string;
+    transcriptCount: number;
+    subtitleCount: number;
+    taskReused?: boolean;
+    asrCacheHit?: boolean | null;
+    translationCacheHit?: boolean | null;
     backendError?: string;
   };
 }
@@ -46,7 +53,14 @@ export type ExtensionMessage =
 
 export type {
   BackendTaskStatus,
+  DubSegment,
   ProcessVideoInput,
+  ProcessingStep,
+  ProcessingStepStatus,
+  ProcessingSteps,
+  SubtitleSegment,
+  TaskStage,
+  TranscriptSegment,
   VideoProcessingRequest,
   VideoProcessingResponse,
   VideoProcessingState,

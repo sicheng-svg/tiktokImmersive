@@ -19,6 +19,7 @@ def app(tmp_path) -> FastAPI:
         settings=Settings(
             audio_dir=tmp_path / "audio",
             media_temp_dir=tmp_path / "media",
+            language_cache_dir=tmp_path / "cache",
             cors_origins=("http://localhost:5173",),
         ),
         media_processor=NoopMediaProcessor(),
